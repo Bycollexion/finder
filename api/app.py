@@ -13,11 +13,13 @@ from concurrent.futures import ThreadPoolExecutor
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {
-    "origins": "*",  # Allow all origins temporarily for debugging
-    "methods": ["GET", "POST", "OPTIONS"],
-    "allow_headers": ["Content-Type"]
-}})
+CORS(app)
+
+# Configure for async operation
+app.config['PROPAGATE_EXCEPTIONS'] = True
+
+app.config['CORS_HEADERS'] = 'Content-Type'
+app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
 # Initialize Anthropic client
 anthropic = Anthropic(

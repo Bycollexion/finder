@@ -11,4 +11,4 @@ COPY ./api .
 
 EXPOSE 8080
 
-CMD ["gunicorn", "--worker-class", "aiohttp.worker.GunicornWebWorker", "--bind", "0.0.0.0:8080", "wsgi:app"]
+CMD ["gunicorn", "--worker-class", "uvicorn.workers.UvicornWorker", "--workers", "1", "--bind", "0.0.0.0:8080", "wsgi:app"]
