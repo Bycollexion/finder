@@ -22,10 +22,7 @@ app.config['CORS_HEADERS'] = 'Content-Type'
 app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
 # Initialize Anthropic client
-anthropic = Anthropic(
-    api_key=os.getenv('ANTHROPIC_API_KEY'),
-    base_url="https://api.anthropic.com",
-)
+anthropic = Anthropic()
 
 # Initialize Redis client
 redis_client = redis.Redis(
@@ -108,29 +105,18 @@ async def get_employee_count_without_cache(company_name, country):
 
         app.logger.info(f'Using API key starting with: {os.getenv("ANTHROPIC_API_KEY")[:8]}...')
         
-        # Try the new messages API first
-        try:
-            message = await anthropic.messages.create(
-                model="claude-3-opus-20240229",
-                max_tokens=1024,
-                messages=[{
-                    "role": "user",
-                    "content": f"How many employees does {company_name} have in {country}? Please respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'"
-                }],
-                temperature=0
-            )
-            response = message.content
-        except AttributeError:
-            # Fallback to older completions API
-            app.logger.info('Falling back to completions API')
-            completion = anthropic.completions.create(
-                model="claude-2.1",
-                max_tokens_to_sample=1024,
-                prompt=f"\n\nHuman: How many employees does {company_name} have in {country}? Respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'\n\nAssistant:",
-                temperature=0
-            )
-            response = completion.completion.strip()
-        
+        async with anthropic.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": f"How many employees does {company_name} have in {country}? Please respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'"
+            }],
+            temperature=0,
+            stream=False
+        ) as message:
+            response = message.content[0].text
+            
         app.logger.info(f'Claude API response for {company_name}: {response}')
         
         # Try to convert to number if possible
