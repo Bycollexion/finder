@@ -114,34 +114,30 @@ async def get_employee_count_without_cache(company_name, country):
     try:
         logger.info(f'Querying Claude API for {company_name} in {country}')
         
-        # Log environment variables for debugging
-        logger.info('Environment variables:')
-        for key in os.environ:
-            if 'KEY' in key or 'SECRET' in key:
-                logger.info(f'{key}: {"*" * 8}{os.environ[key][-4:]}')
-            else:
-                logger.info(f'{key}: {os.environ[key]}')
-        
         try:
             logger.info('Making API call to Claude...')
             message = await anthropic.messages.create(
-                model="claude-3-opus-20240229",
+                model="claude-3-sonnet-20240229",
                 max_tokens=1024,
                 messages=[{
                     "role": "user",
-                    "content": f"How many employees does {company_name} have in {country}? Please respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'"
+                    "content": f"""Please tell me the approximate number of employees that {company_name} has in {country}.
+                    I need ONLY a number as response. If you're not sure about the exact number but know it's in a certain range, provide the middle of that range.
+                    If you truly cannot find any information about the company's presence in that country, respond with 'Error retrieving data'."""
                 }],
                 temperature=0
             )
             
             logger.info(f'Raw API response: {message}')
-            response = message.content[0].text
+            response = message.content[0].text.strip()
             logger.info(f'Claude API response for {company_name}: {response}')
             
             # Try to convert to number if possible
             try:
-                int(response)
-                return response
+                # Remove any commas and try to convert to int
+                cleaned_response = response.replace(',', '')
+                int(cleaned_response)
+                return cleaned_response
             except ValueError:
                 if "error" in response.lower():
                     return "Error retrieving data"
