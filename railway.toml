@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-nixpacksConfigPath = "backend"
+nixpacksConfigPath = "backend/nixpacks.toml"
 buildCommand = "pip install -r backend/requirements.txt"
 
 [deploy]
