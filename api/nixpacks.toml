@@ -1,6 +1,0 @@
-# nixpacks.toml
-[phases.setup]
-nixPkgs = ["python312"]
-
-[start]
-cmd = "gunicorn wsgi:app --bind 0.0.0.0:$PORT"
