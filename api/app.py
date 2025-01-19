@@ -17,8 +17,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from .env only if they don't exist
+load_dotenv(override=False)
 
 app = Flask(__name__)
 CORS(app)
@@ -29,7 +29,7 @@ app.config['CORS_HEADERS'] = 'Content-Type'
 app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
 # Initialize Anthropic client
-api_key = os.getenv("ANTHROPIC_API_KEY")
+api_key = os.environ.get("ANTHROPIC_API_KEY")
 if not api_key:
     logger.error("No ANTHROPIC_API_KEY found in environment variables!")
 else:
