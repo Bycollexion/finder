@@ -1,1 +1,1 @@
-web: cd backend && gunicorn --bind 0.0.0.0:$PORT wsgi:app
+web: cd backend && gunicorn wsgi:app --log-level debug
