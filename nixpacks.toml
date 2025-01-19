@@ -1,15 +1,18 @@
 [phases.setup]
 nixPkgs = ["python312"]
-
-[phases.install]
 cmds = [
-    "cd backend && pip install -r requirements.txt"
+    "ln -sf /nix/store/*/bin/python3.12 /usr/local/bin/python3",
+    "ln -sf /nix/store/*/bin/pip3.12 /usr/local/bin/pip3"
 ]
 
+[phases.install]
+cmds = ["cd backend && pip3 install --user -r requirements.txt"]
+
 [start]
-cmd = "cd backend && gunicorn wsgi:app --bind 0.0.0.0:$PORT"
+cmd = "cd backend && python3 -m gunicorn wsgi:app --bind 0.0.0.0:$PORT"
 
 [variables]
 PYTHONPATH = "/app/backend"
 PYTHONUNBUFFERED = "1"
 NIXPACKS_PYTHON_VERSION = "3.12"
+PATH = "/root/.local/bin:$PATH"
