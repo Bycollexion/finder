@@ -29,7 +29,8 @@ app.config['CORS_HEADERS'] = 'Content-Type'
 app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
 # Initialize Anthropic client
-api_key = os.environ.get("ANTHROPIC_API_KEY")
+# Check both direct and Finder-grouped environment variables
+api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("Finder_ANTHROPIC_API_KEY")
 if not api_key:
     logger.error("No ANTHROPIC_API_KEY found in environment variables!")
 else:
