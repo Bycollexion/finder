@@ -216,6 +216,10 @@ def process_file():
         print("Error processing file:", str(e))
         return jsonify({'error': str(e)}), 500
 
+@app.route('/')
+def health_check():
+    return jsonify({"status": "healthy"}), 200
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     debug = os.getenv('FLASK_ENV') == 'development'
