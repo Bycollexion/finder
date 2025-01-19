@@ -100,33 +100,50 @@ async def get_employee_count(company_name, country):
 async def get_employee_count_without_cache(company_name, country):
     try:
         app.logger.info(f'Querying Claude API for {company_name} in {country}')
-        if not os.getenv("ANTHROPIC_API_KEY"):
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
             app.logger.error('No ANTHROPIC_API_KEY found in environment')
             return "Error: No API key configured"
 
-        app.logger.info(f'Using API key starting with: {os.getenv("ANTHROPIC_API_KEY")[:8]}...')
+        # Log environment variables for debugging
+        app.logger.info('Environment variables:')
+        for key in os.environ:
+            if 'KEY' in key or 'SECRET' in key:
+                app.logger.info(f'{key}: {"*" * 8}{os.environ[key][-4:]}')
+            else:
+                app.logger.info(f'{key}: {os.environ[key]}')
+
+        app.logger.info(f'Using API key: ***{api_key[-4:]}')
         
-        message = await anthropic.messages.create(
-            model="claude-3-opus-20240229",
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": f"How many employees does {company_name} have in {country}? Please respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'"
-            }],
-            temperature=0
-        )
-        
-        response = message.content[0].text
-        app.logger.info(f'Claude API response for {company_name}: {response}')
-        
-        # Try to convert to number if possible
         try:
-            int(response)
-            return response
-        except ValueError:
-            if "error" in response.lower():
-                return "Error retrieving data"
-            return response
+            message = await anthropic.messages.create(
+                model="claude-3-opus-20240229",
+                max_tokens=1024,
+                messages=[{
+                    "role": "user",
+                    "content": f"How many employees does {company_name} have in {country}? Please respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'"
+                }],
+                temperature=0
+            )
+            
+            app.logger.info(f'Raw API response: {message}')
+            response = message.content[0].text
+            app.logger.info(f'Claude API response for {company_name}: {response}')
+            
+            # Try to convert to number if possible
+            try:
+                int(response)
+                return response
+            except ValueError:
+                if "error" in response.lower():
+                    return "Error retrieving data"
+                return response
+
+        except Exception as api_error:
+            app.logger.error(f'API call error: {str(api_error)}')
+            app.logger.error(f'API error type: {type(api_error).__name__}')
+            app.logger.error(f'API error details: {api_error.__dict__}')
+            return f"Error: API call failed - {str(api_error)}"
 
     except Exception as e:
         app.logger.error(f'Error calling Claude API: {str(e)}')
@@ -138,13 +155,23 @@ async def process_companies(companies, country):
     try:
         app.logger.info(f'Processing {len(companies)} companies for {country}')
         results = []
+        
         for company in companies:
-            count = await get_employee_count(company, country)
-            app.logger.info(f'Got count for {company}: {count}')
-            results.append({'company': company, 'employee_count': count})
+            app.logger.info(f'Processing company: {company}')
+            count = await get_employee_count_without_cache(company, country)
+            app.logger.info(f'Result for {company}: {count}')
+            results.append({
+                'company': company,
+                'employee_count': count
+            })
+        
+        app.logger.info(f'Finished processing all companies. Results: {results}')
         return results
+        
     except Exception as e:
         app.logger.error(f'Error processing companies: {str(e)}')
+        app.logger.error(f'Error type: {type(e).__name__}')
+        app.logger.error(f'Error details: {e.__dict__}')
         return [{'company': company, 'employee_count': 'Error retrieving data'} for company in companies]
 
 @app.route('/')
