@@ -100,7 +100,11 @@ def get_employee_count(company_name, country):
 async def get_employee_count_without_cache(company_name, country):
     try:
         app.logger.info(f'Querying Claude API for {company_name} in {country}')
-        app.logger.info(f'Using API key: {os.getenv("ANTHROPIC_API_KEY")[:8]}...')  # Log first 8 chars of API key
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            app.logger.error('No ANTHROPIC_API_KEY found in environment')
+            return "Error: No API key configured"
+
+        app.logger.info(f'Using API key starting with: {os.getenv("ANTHROPIC_API_KEY")[:8]}...')
         
         message = await anthropic.messages.create(
             model="claude-3-opus-20240229",
@@ -108,14 +112,27 @@ async def get_employee_count_without_cache(company_name, country):
             messages=[{
                 "role": "user",
                 "content": f"How many employees does {company_name} have in {country}? Please respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'"
-            }]
+            }],
+            temperature=0
         )
-        app.logger.info(f'Claude API response: {message.content}')
-        return message.content
+        
+        response = message.content
+        app.logger.info(f'Claude API response for {company_name}: {response}')
+        
+        # Try to convert to number if possible
+        try:
+            int(response)
+            return response
+        except ValueError:
+            if "error" in response.lower():
+                return "Error retrieving data"
+            return response
+
     except Exception as e:
         app.logger.error(f'Error calling Claude API: {str(e)}')
-        app.logger.error(f'API Key present: {"Yes" if os.getenv("ANTHROPIC_API_KEY") else "No"}')
-        return "Error retrieving data"
+        app.logger.error(f'Error type: {type(e).__name__}')
+        app.logger.error(f'Full error details: {e.__dict__}')
+        return f"Error: {str(e)}"
 
 async def process_companies(companies, country):
     try:
@@ -137,84 +154,79 @@ def get_countries():
     return jsonify(ASIAN_AUSTRALIAN_COUNTRIES)
 
 @app.route('/api/process', methods=['POST'])
-def process_file():
-    print("Processing file request...")
-    print("Files in request:", request.files)
-    print("Form data:", request.form)
-
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
-    
-    country = request.form.get('country')
-    if not country or country not in ASIAN_AUSTRALIAN_COUNTRIES:
-        return jsonify({'error': f'Invalid country selection: {country}'}), 400
-
-    file = request.files['file']
-    print("File name:", file.filename)
-    
-    if not file.filename.endswith('.csv'):
-        return jsonify({'error': 'Invalid file format. Please upload a CSV file'}), 400
-
+async def process_file():
     try:
+        app.logger.info('Process file endpoint called')
+        if 'file' not in request.files:
+            app.logger.error('No file part in request')
+            return jsonify({'error': 'No file part'}), 400
+        
+        file = request.files['file']
+        if not file:
+            app.logger.error('No file selected')
+            return jsonify({'error': 'No file selected'}), 400
+        
+        country = request.form.get('country')
+        if not country:
+            app.logger.error('No country specified')
+            return jsonify({'error': 'No country specified'}), 400
+        
+        app.logger.info(f'Processing file for country: {country}')
+        
         # Read the CSV file
-        content = file.read().decode('utf-8-sig')
-        print("File content:", content[:200])
-        csv_input = csv.reader(io.StringIO(content))
-        rows = list(csv_input)
+        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+        csv_input = csv.reader(stream)
         
-        if not rows:
-            return jsonify({'error': 'Empty CSV file'}), 400
+        # Get headers and rows
+        try:
+            headers = next(csv_input)  # Get header row
+            rows = list(csv_input)     # Get all data rows
+        except Exception as e:
+            app.logger.error(f'Error reading CSV: {str(e)}')
+            return jsonify({'error': 'Invalid CSV format'}), 400
             
-        headers = rows[0]
-        print("CSV headers:", headers)
+        app.logger.info(f'CSV headers: {headers}')
+        app.logger.info(f'Found {len(rows)} companies to process')
         
-        # Clean up header names by stripping whitespace and BOM
-        headers = [h.strip().replace('\ufeff', '') for h in headers]
+        # Find company name column
+        company_name_index = next((i for i, h in enumerate(headers) if 'company' in h.lower()), 0)
         
-        if 'Company Name' not in headers:
-            return jsonify({'error': f'CSV file must contain a "Company Name" column. Found columns: {headers}'}), 400
-            
-        company_name_index = headers.index('Company Name')
-        headers.append('Number of Employees')
+        # Get company names
+        companies = [row[company_name_index] for row in rows if len(row) > company_name_index]
         
-        # Extract company names
-        companies = [row[company_name_index] for row in rows[1:] if company_name_index < len(row)]
+        # Process companies
+        employee_counts = await process_companies(companies, country)
         
-        # Process companies in parallel
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        employee_counts = loop.run_until_complete(process_companies(companies, country))
-        loop.close()
+        # Create new CSV with results
+        output = io.StringIO()
+        writer = csv.writer(output)
         
-        # Create processed rows with results
-        processed_rows = [headers]
-        for i, row in enumerate(rows[1:]):
+        # Write headers
+        new_headers = headers + ['Employee Count']
+        writer.writerow(new_headers)
+        
+        # Write data rows with employee counts
+        for i, row in enumerate(rows):
             if company_name_index < len(row):
                 new_row = list(row)
-                new_row.append(employee_counts[i]['employee_count'])
-                processed_rows.append(new_row)
-            else:
-                print(f"Skipping invalid row: {row}")
-                new_row = list(row)
-                new_row.append('Error: Invalid row')
-                processed_rows.append(new_row)
-
-        # Create output CSV
-        output = io.StringIO()
-        writer = csv.writer(output, lineterminator='\n')
-        writer.writerows(processed_rows)
+                count = employee_counts[i]['employee_count'] if i < len(employee_counts) else 'Error: No data'
+                new_row.append(count)
+                writer.writerow(new_row)
+                app.logger.info(f'Processed {row[company_name_index]}: {count}')
         
-        # Create response
+        # Prepare response
         output.seek(0)
         return send_file(
             io.BytesIO(output.getvalue().encode('utf-8')),
             mimetype='text/csv',
             as_attachment=True,
-            download_name='updated_companies.csv'
+            download_name='processed_companies.csv'
         )
-
+        
     except Exception as e:
-        print("Error processing file:", str(e))
+        app.logger.error(f'Error in process_file: {str(e)}')
+        app.logger.error(f'Error type: {type(e).__name__}')
+        app.logger.error(f'Full error details: {e.__dict__}')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/')
