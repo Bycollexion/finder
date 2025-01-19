@@ -97,32 +97,38 @@ def get_employee_count(company_name, country):
         print(f"Error getting employee count for {company_name}: {str(e)}")
         return "Error retrieving data"
 
-def get_employee_count_without_cache(company_name, country):
+async def get_employee_count_without_cache(company_name, country):
     try:
-        completion = anthropic.completions.create(
+        app.logger.info(f'Querying Claude API for {company_name} in {country}')
+        app.logger.info(f'Using API key: {os.getenv("ANTHROPIC_API_KEY")[:8]}...')  # Log first 8 chars of API key
+        
+        message = await anthropic.messages.create(
             model="claude-3-opus-20240229",
-            max_tokens_to_sample=300,
-            temperature=0,
-            system="You are a helpful assistant with accurate knowledge about major companies and their employee counts in different countries.",
-            prompt=f"\n\nHuman: How many employees does {company_name} have in {country}? Respond with ONLY a number. If you're not sure, respond with 'Unknown'.\n\nAssistant:"
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": f"How many employees does {company_name} have in {country}? Please respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'"
+            }]
         )
-        response = completion.completion.strip()
-        return response
+        app.logger.info(f'Claude API response: {message.content}')
+        return message.content
     except Exception as e:
-        print(f"Error in fallback employee count for {company_name}: {str(e)}")
+        app.logger.error(f'Error calling Claude API: {str(e)}')
+        app.logger.error(f'API Key present: {"Yes" if os.getenv("ANTHROPIC_API_KEY") else "No"}')
         return "Error retrieving data"
 
 async def process_companies(companies, country):
-    loop = asyncio.get_event_loop()
-    # Process companies in parallel using the thread pool
-    tasks = []
-    for company in companies:
-        task = loop.run_in_executor(executor, get_employee_count, company, country)
-        tasks.append(task)
-    
-    # Wait for all tasks to complete
-    results = await asyncio.gather(*tasks)
-    return results
+    try:
+        app.logger.info(f'Processing {len(companies)} companies for {country}')
+        results = []
+        for company in companies:
+            count = await get_employee_count(company, country)
+            app.logger.info(f'Got count for {company}: {count}')
+            results.append({'company': company, 'employee_count': count})
+        return results
+    except Exception as e:
+        app.logger.error(f'Error processing companies: {str(e)}')
+        return [{'company': company, 'employee_count': 'Error retrieving data'} for company in companies]
 
 @app.route('/api/countries', methods=['GET'])
 def get_countries():
@@ -185,7 +191,7 @@ def process_file():
         for i, row in enumerate(rows[1:]):
             if company_name_index < len(row):
                 new_row = list(row)
-                new_row.append(employee_counts[i])
+                new_row.append(employee_counts[i]['employee_count'])
                 processed_rows.append(new_row)
             else:
                 print(f"Skipping invalid row: {row}")
