@@ -16,7 +16,10 @@ app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173"]}})
 
 # Initialize Anthropic client
-anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+anthropic = Anthropic(
+    api_key=os.getenv('ANTHROPIC_API_KEY'),
+    base_url="https://api.anthropic.com",
+)
 
 # Initialize Redis client
 redis_client = redis.Redis(
@@ -60,18 +63,14 @@ def get_employee_count(company_name, country):
             return cached_result
             
         print(f"Cache miss - requesting employee count for {company_name} in {country}")
-        message = anthropic.messages.create(
+        completion = anthropic.completions.create(
             model="claude-3-opus-20240229",
-            max_tokens=300,
+            max_tokens_to_sample=300,
             temperature=0,
             system="You are a helpful assistant with accurate knowledge about major companies and their employee counts in different countries. When you know the approximate number, provide it. Only respond with 'Unknown' if you really have no information about the company's presence in that country.",
-            messages=[{
-                "role": "user",
-                "content": f"How many employees does {company_name} have in {country}? Respond with ONLY a number. If you're absolutely not sure, respond with 'Unknown'. For major tech companies like Google, Meta/Facebook, Amazon, etc., you should have approximate numbers. For regional companies like Singtel, Seek, JobStreet, etc., focus on their presence in the specified country."
-            }]
+            prompt=f"\n\nHuman: How many employees does {company_name} have in {country}? Respond with ONLY a number. If you're absolutely not sure, respond with 'Unknown'. For major tech companies like Google, Meta/Facebook, Amazon, etc., you should have approximate numbers. For regional companies like Singtel, Seek, JobStreet, etc., focus on their presence in the specified country.\n\nAssistant:"
         )
-        response = str(message.content)
-        response = response.strip().replace('[TextBlock(text=\'', '').replace('\', type=\'text\')]', '')
+        response = completion.completion.strip()
         print(f"Claude response for {company_name}: {response}")
         
         # Cache the result for 24 hours (86400 seconds)
@@ -96,18 +95,14 @@ def get_employee_count(company_name, country):
 
 def get_employee_count_without_cache(company_name, country):
     try:
-        message = anthropic.messages.create(
+        completion = anthropic.completions.create(
             model="claude-3-opus-20240229",
-            max_tokens=300,
+            max_tokens_to_sample=300,
             temperature=0,
             system="You are a helpful assistant with accurate knowledge about major companies and their employee counts in different countries.",
-            messages=[{
-                "role": "user",
-                "content": f"How many employees does {company_name} have in {country}? Respond with ONLY a number. If you're not sure, respond with 'Unknown'."
-            }]
+            prompt=f"\n\nHuman: How many employees does {company_name} have in {country}? Respond with ONLY a number. If you're not sure, respond with 'Unknown'.\n\nAssistant:"
         )
-        response = str(message.content)
-        response = response.strip().replace('[TextBlock(text=\'', '').replace('\', type=\'text\')]', '')
+        response = completion.completion.strip()
         return response
     except Exception as e:
         print(f"Error in fallback employee count for {company_name}: {str(e)}")
