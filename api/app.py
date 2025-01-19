@@ -161,11 +161,21 @@ async def process_companies(companies, country):
         app.logger.error(f'Error processing companies: {str(e)}')
         return [{'company': company, 'employee_count': 'Error retrieving data'} for company in companies]
 
-@app.route('/api/countries', methods=['GET'])
+@app.route('/')
+def index():
+    try:
+        return jsonify({"status": "healthy", "message": "API is running"}), 200
+    except Exception as e:
+        app.logger.error(f"Error in index route: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/api/countries')
 def get_countries():
-    app.logger.info('Countries endpoint called')
-    app.logger.info(f'Returning countries: {ASIAN_AUSTRALIAN_COUNTRIES}')
-    return jsonify(ASIAN_AUSTRALIAN_COUNTRIES)
+    try:
+        return jsonify(ASIAN_AUSTRALIAN_COUNTRIES)
+    except Exception as e:
+        app.logger.error(f"Error in get_countries route: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/api/process', methods=['POST'])
 async def process_file():
@@ -248,10 +258,6 @@ async def process_file():
         app.logger.error(f'Error type: {type(e).__name__}')
         app.logger.error(f'Full error details: {e.__dict__}')
         return jsonify({'error': str(e)}), 500
-
-@app.route('/')
-def health_check():
-    return jsonify({"status": "healthy"}), 200
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
