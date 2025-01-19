@@ -169,16 +169,18 @@ def get_countries():
 async def process_file():
     try:
         app.logger.info('Process file endpoint called')
-        if 'file' not in request.files:
+        files = await request.files
+        if 'file' not in files:
             app.logger.error('No file part in request')
             return jsonify({'error': 'No file part'}), 400
         
-        file = request.files['file']
+        file = files['file']
         if not file:
             app.logger.error('No file selected')
             return jsonify({'error': 'No file selected'}), 400
         
-        country = request.form.get('country')
+        form = await request.form
+        country = form.get('country')
         if not country:
             app.logger.error('No country specified')
             return jsonify({'error': 'No country specified'}), 400
@@ -186,7 +188,7 @@ async def process_file():
         app.logger.info(f'Processing file for country: {country}')
         
         # Read the CSV file
-        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+        stream = io.StringIO((await file.read()).decode("UTF8"), newline=None)
         csv_input = csv.reader(stream)
         
         # Get headers and rows
