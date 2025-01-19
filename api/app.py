@@ -1,15 +1,16 @@
 import os
 import csv
 import io
-import asyncio
 import json
 import redis
+import logging
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from anthropic import Anthropic
 from dotenv import load_dotenv
+from anthropic import AsyncAnthropic
 from concurrent.futures import ThreadPoolExecutor
 
+# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
@@ -17,12 +18,11 @@ CORS(app)
 
 # Configure for async operation
 app.config['PROPAGATE_EXCEPTIONS'] = True
-
 app.config['CORS_HEADERS'] = 'Content-Type'
 app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
 # Initialize Anthropic client
-anthropic = Anthropic()
+anthropic = AsyncAnthropic()
 
 # Initialize Redis client
 redis_client = redis.Redis(
@@ -37,6 +37,7 @@ redis_client = redis.Redis(
 # Create a thread pool for parallel processing
 executor = ThreadPoolExecutor(max_workers=10)
 
+# List of Asian and Australian countries
 ASIAN_AUSTRALIAN_COUNTRIES = [
     "Australia",
     "China",
@@ -55,7 +56,7 @@ ASIAN_AUSTRALIAN_COUNTRIES = [
 def get_cache_key(company_name, country):
     return f"employee_count:{company_name.lower()}:{country.lower()}"
 
-def get_employee_count(company_name, country):
+async def get_employee_count(company_name, country):
     try:
         # Check cache first
         cache_key = get_cache_key(company_name, country)
@@ -66,7 +67,7 @@ def get_employee_count(company_name, country):
             return cached_result
             
         print(f"Cache miss - requesting employee count for {company_name} in {country}")
-        completion = anthropic.completions.create(
+        completion = await anthropic.completions.create(
             model="claude-3-opus-20240229",
             max_tokens_to_sample=300,
             temperature=0,
@@ -91,7 +92,7 @@ def get_employee_count(company_name, country):
     except redis.RedisError as e:
         print(f"Redis error: {str(e)}")
         # Continue without caching if Redis is unavailable
-        return get_employee_count_without_cache(company_name, country)
+        return await get_employee_count_without_cache(company_name, country)
     except Exception as e:
         print(f"Error getting employee count for {company_name}: {str(e)}")
         return "Error retrieving data"
