@@ -1,1 +1,1 @@
-web: cd backend && gunicorn wsgi:app --log-level debug
+web: cd backend && pip install -r requirements.txt && gunicorn wsgi:app --log-level debug
