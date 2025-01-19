@@ -22,6 +22,8 @@ anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 redis_client = redis.Redis(
     host=os.getenv('REDIS_HOST', 'localhost'),
     port=int(os.getenv('REDIS_PORT', 6379)),
+    username=os.getenv('REDIS_USER', 'default'),
+    password=os.getenv('REDIS_PASSWORD'),
     db=0,
     decode_responses=True
 )
