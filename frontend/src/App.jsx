@@ -29,14 +29,21 @@ function App() {
   useEffect(() => {
     const fetchCountries = async () => {
       try {
+        console.log('API Base URL:', API_BASE_URL)
         console.log('Fetching countries from:', `${API_BASE_URL}/api/countries`)
         const response = await axios.get(`${API_BASE_URL}/api/countries`)
+        console.log('Countries response:', response.data)
         setCountries(response.data)
       } catch (error) {
         console.error('Error fetching countries:', error)
         if (error.response) {
           console.error('Response data:', error.response.data)
           console.error('Response status:', error.response.status)
+          console.error('Response headers:', error.response.headers)
+        } else if (error.request) {
+          console.error('Request made but no response:', error.request)
+        } else {
+          console.error('Error setting up request:', error.message)
         }
         setError('Failed to load countries. Please try again later.')
         setCountries([])
@@ -84,6 +91,7 @@ function App() {
     formData.append('country', country)
 
     try {
+      console.log('API Base URL:', API_BASE_URL)
       console.log('Submitting file:', file.name, 'for country:', country)
       const response = await axios.post(`${API_BASE_URL}/api/process`, formData, {
         responseType: 'blob',
@@ -94,7 +102,7 @@ function App() {
         }
       })
 
-      console.log('Process response received')
+      console.log('Process response:', response.data)
       setProcessingStatus('Processing complete! Downloading file...')
       // Create download link
       const url = window.URL.createObjectURL(new Blob([response.data]))
@@ -110,6 +118,11 @@ function App() {
       if (error.response) {
         console.error('Response data:', error.response.data)
         console.error('Response status:', error.response.status)
+        console.error('Response headers:', error.response.headers)
+      } else if (error.request) {
+        console.error('Request made but no response:', error.request)
+      } else {
+        console.error('Error setting up request:', error.message)
       }
       setError('Failed to process file. Please try again later.')
     } finally {
