@@ -122,23 +122,24 @@ async def get_employee_count_without_cache(company_name, country):
                 max_tokens=1024,
                 messages=[{
                     "role": "user",
-                    "content": f"""I need to know specifically how many employees {company_name} has in their local office(s) in {country}.
+                    "content": f"""I need to know approximately how many employees {company_name} has in their office(s) in {country}.
 
-Important guidelines:
-1. Focus ONLY on direct employees in physical offices in {country}, not regional numbers
-2. Do not include contractors or outsourced staff
-3. For tech companies, only count employees in actual local offices, not remote workers serving the region
-4. If you're not completely certain about the current local office numbers, respond with 'Error retrieving data'
-5. Respond with ONLY a number, no text
+Guidelines:
+1. Focus on employees in physical offices in {country}
+2. If you know a range (e.g., "50-100 employees"), provide the middle number (e.g., "75")
+3. For tech companies with both office and remote workers in {country}, include both if you can verify they are direct employees
+4. Respond with ONLY a number
+5. Only respond with 'Error retrieving data' if you have no reliable information about their presence in {country}
 
-Example good responses:
-- "50" (if you're confident about the local office count)
-- "Error retrieving data" (if you're not certain about current local numbers)
+For context:
+- Major tech companies (Google, Meta/Facebook, etc.) typically have 50-500 employees in their {country} offices
+- Regional companies (like Singtel, Jobstreet) may have larger local presence
+- Include only employees, not contractors
 
-Example bad responses:
-- Regional numbers instead of local office counts
-- Outdated numbers from old sources
-- Estimates that include contractors or remote workers"""
+Example responses:
+- "75" (if you know it's between 50-100)
+- "200" (if you have a reliable source)
+- "Error retrieving data" (if no reliable information available)"""
                 }],
                 temperature=0
             )
