@@ -1,6 +1,6 @@
 import os
-import csv
 import io
+import csv
 import json
 import redis
 import logging
@@ -9,6 +9,13 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
 from concurrent.futures import ThreadPoolExecutor
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -22,7 +29,13 @@ app.config['CORS_HEADERS'] = 'Content-Type'
 app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
 # Initialize Anthropic client
-anthropic = AsyncAnthropic()
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    logger.error("No ANTHROPIC_API_KEY found in environment variables!")
+else:
+    logger.info(f"ANTHROPIC_API_KEY found: ***{api_key[-4:]}")
+    
+anthropic = AsyncAnthropic(api_key=api_key)
 
 # Initialize Redis client
 redis_client = redis.Redis(
@@ -63,10 +76,10 @@ async def get_employee_count(company_name, country):
         cached_result = redis_client.get(cache_key)
         
         if cached_result:
-            print(f"Cache hit for {company_name} in {country}")
+            logger.info(f"Cache hit for {company_name} in {country}")
             return cached_result
             
-        print(f"Cache miss - requesting employee count for {company_name} in {country}")
+        logger.info(f"Cache miss - requesting employee count for {company_name} in {country}")
         completion = await anthropic.completions.create(
             model="claude-3-opus-20240229",
             max_tokens_to_sample=300,
@@ -75,7 +88,7 @@ async def get_employee_count(company_name, country):
             prompt=f"\n\nHuman: How many employees does {company_name} have in {country}? Respond with ONLY a number. If you're absolutely not sure, respond with 'Unknown'. For major tech companies like Google, Meta/Facebook, Amazon, etc., you should have approximate numbers. For regional companies like Singtel, Seek, JobStreet, etc., focus on their presence in the specified country.\n\nAssistant:"
         )
         response = completion.completion.strip()
-        print(f"Claude response for {company_name}: {response}")
+        logger.info(f"Claude response for {company_name}: {response}")
         
         # Cache the result for 24 hours (86400 seconds)
         if response.lower() != 'unknown':
@@ -90,32 +103,27 @@ async def get_employee_count(company_name, country):
             return response
             
     except redis.RedisError as e:
-        print(f"Redis error: {str(e)}")
+        logger.error(f"Redis error: {str(e)}")
         # Continue without caching if Redis is unavailable
         return await get_employee_count_without_cache(company_name, country)
     except Exception as e:
-        print(f"Error getting employee count for {company_name}: {str(e)}")
+        logger.error(f"Error getting employee count for {company_name}: {str(e)}")
         return "Error retrieving data"
 
 async def get_employee_count_without_cache(company_name, country):
     try:
-        app.logger.info(f'Querying Claude API for {company_name} in {country}')
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            app.logger.error('No ANTHROPIC_API_KEY found in environment')
-            return "Error: No API key configured"
-
+        logger.info(f'Querying Claude API for {company_name} in {country}')
+        
         # Log environment variables for debugging
-        app.logger.info('Environment variables:')
+        logger.info('Environment variables:')
         for key in os.environ:
             if 'KEY' in key or 'SECRET' in key:
-                app.logger.info(f'{key}: {"*" * 8}{os.environ[key][-4:]}')
+                logger.info(f'{key}: {"*" * 8}{os.environ[key][-4:]}')
             else:
-                app.logger.info(f'{key}: {os.environ[key]}')
-
-        app.logger.info(f'Using API key: ***{api_key[-4:]}')
+                logger.info(f'{key}: {os.environ[key]}')
         
         try:
+            logger.info('Making API call to Claude...')
             message = await anthropic.messages.create(
                 model="claude-3-opus-20240229",
                 max_tokens=1024,
@@ -126,9 +134,9 @@ async def get_employee_count_without_cache(company_name, country):
                 temperature=0
             )
             
-            app.logger.info(f'Raw API response: {message}')
+            logger.info(f'Raw API response: {message}')
             response = message.content[0].text
-            app.logger.info(f'Claude API response for {company_name}: {response}')
+            logger.info(f'Claude API response for {company_name}: {response}')
             
             # Try to convert to number if possible
             try:
@@ -140,38 +148,38 @@ async def get_employee_count_without_cache(company_name, country):
                 return response
 
         except Exception as api_error:
-            app.logger.error(f'API call error: {str(api_error)}')
-            app.logger.error(f'API error type: {type(api_error).__name__}')
-            app.logger.error(f'API error details: {api_error.__dict__}')
+            logger.error(f'API call error: {str(api_error)}')
+            logger.error(f'API error type: {type(api_error).__name__}')
+            logger.error(f'API error details: {api_error.__dict__}')
             return f"Error: API call failed - {str(api_error)}"
 
     except Exception as e:
-        app.logger.error(f'Error calling Claude API: {str(e)}')
-        app.logger.error(f'Error type: {type(e).__name__}')
-        app.logger.error(f'Full error details: {e.__dict__}')
+        logger.error(f'Error calling Claude API: {str(e)}')
+        logger.error(f'Error type: {type(e).__name__}')
+        logger.error(f'Full error details: {e.__dict__}')
         return f"Error: {str(e)}"
 
 async def process_companies(companies, country):
     try:
-        app.logger.info(f'Processing {len(companies)} companies for {country}')
+        logger.info(f'Processing {len(companies)} companies for {country}')
         results = []
         
         for company in companies:
-            app.logger.info(f'Processing company: {company}')
+            logger.info(f'Processing company: {company}')
             count = await get_employee_count_without_cache(company, country)
-            app.logger.info(f'Result for {company}: {count}')
+            logger.info(f'Result for {company}: {count}')
             results.append({
                 'company': company,
                 'employee_count': count
             })
         
-        app.logger.info(f'Finished processing all companies. Results: {results}')
+        logger.info(f'Finished processing all companies. Results: {results}')
         return results
         
     except Exception as e:
-        app.logger.error(f'Error processing companies: {str(e)}')
-        app.logger.error(f'Error type: {type(e).__name__}')
-        app.logger.error(f'Error details: {e.__dict__}')
+        logger.error(f'Error processing companies: {str(e)}')
+        logger.error(f'Error type: {type(e).__name__}')
+        logger.error(f'Error details: {e.__dict__}')
         return [{'company': company, 'employee_count': 'Error retrieving data'} for company in companies]
 
 @app.route('/')
@@ -179,7 +187,7 @@ def index():
     try:
         return jsonify({"status": "healthy", "message": "API is running"}), 200
     except Exception as e:
-        app.logger.error(f"Error in index route: {str(e)}")
+        logger.error(f"Error in index route: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/api/countries')
@@ -187,31 +195,31 @@ def get_countries():
     try:
         return jsonify(ASIAN_AUSTRALIAN_COUNTRIES)
     except Exception as e:
-        app.logger.error(f"Error in get_countries route: {str(e)}")
+        logger.error(f"Error in get_countries route: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/api/process', methods=['POST'])
 async def process_file():
     try:
-        app.logger.info('Process file endpoint called')
+        logger.info('Process file endpoint called')
         
         # Get file from request
         if 'file' not in request.files:
-            app.logger.error('No file part in request')
+            logger.error('No file part in request')
             return jsonify({'error': 'No file part'}), 400
         
         file = request.files['file']
         if not file:
-            app.logger.error('No file selected')
+            logger.error('No file selected')
             return jsonify({'error': 'No file selected'}), 400
         
         # Get country from form
         country = request.form.get('country')
         if not country:
-            app.logger.error('No country specified')
+            logger.error('No country specified')
             return jsonify({'error': 'No country specified'}), 400
         
-        app.logger.info(f'Processing file for country: {country}')
+        logger.info(f'Processing file for country: {country}')
         
         # Read the CSV file
         file_content = file.read()
@@ -225,11 +233,11 @@ async def process_file():
             headers = next(csv_input)  # Get header row
             rows = list(csv_input)     # Get all data rows
         except Exception as e:
-            app.logger.error(f'Error reading CSV: {str(e)}')
+            logger.error(f'Error reading CSV: {str(e)}')
             return jsonify({'error': 'Invalid CSV format'}), 400
             
-        app.logger.info(f'CSV headers: {headers}')
-        app.logger.info(f'Found {len(rows)} companies to process')
+        logger.info(f'CSV headers: {headers}')
+        logger.info(f'Found {len(rows)} companies to process')
         
         # Find company name column
         company_name_index = next((i for i, h in enumerate(headers) if 'company' in h.lower()), 0)
@@ -255,7 +263,7 @@ async def process_file():
                 count = employee_counts[i]['employee_count'] if i < len(employee_counts) else 'Error: No data'
                 new_row.append(count)
                 writer.writerow(new_row)
-                app.logger.info(f'Processed {row[company_name_index]}: {count}')
+                logger.info(f'Processed {row[company_name_index]}: {count}')
         
         # Prepare response
         output.seek(0)
@@ -267,9 +275,9 @@ async def process_file():
         )
         
     except Exception as e:
-        app.logger.error(f'Error in process_file: {str(e)}')
-        app.logger.error(f'Error type: {type(e).__name__}')
-        app.logger.error(f'Full error details: {e.__dict__}')
+        logger.error(f'Error in process_file: {str(e)}')
+        logger.error(f'Error type: {type(e).__name__}')
+        logger.error(f'Full error details: {e.__dict__}')
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
