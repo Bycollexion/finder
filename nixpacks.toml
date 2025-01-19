@@ -1,8 +1,16 @@
 [phases.setup]
-nixPkgs = ["python312"]
+nixPkgs = ["python312", "gcc"]
+aptPkgs = ["python3-pip", "python3-dev", "build-essential"]
 
 [phases.install]
-cmds = ["cd backend && python -m pip install -r requirements.txt"]
+cmds = [
+    "python3 -m pip install --upgrade pip",
+    "cd backend && python3 -m pip install -r requirements.txt"
+]
 
 [start]
-cmd = "cd backend && python -m gunicorn wsgi:app --bind 0.0.0.0:$PORT"
+cmd = "cd backend && python3 -m gunicorn wsgi:app --bind 0.0.0.0:$PORT"
+
+[variables]
+PYTHONPATH = "/app/backend"
+PYTHONUNBUFFERED = "1"
