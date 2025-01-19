@@ -31,12 +31,14 @@ function App() {
       try {
         console.log('Fetching countries from:', `${API_BASE_URL}/api/countries`)
         const response = await axios.get(`${API_BASE_URL}/api/countries`)
-        console.log('Countries response:', response.data)
         setCountries(response.data)
-        setError(null)
       } catch (error) {
         console.error('Error fetching countries:', error)
-        setError(error.response?.data?.error || error.message || 'Failed to load countries')
+        if (error.response) {
+          console.error('Response data:', error.response.data)
+          console.error('Response status:', error.response.status)
+        }
+        setError('Failed to load countries. Please try again later.')
         setCountries([])
       }
     }
@@ -105,24 +107,11 @@ function App() {
       setProcessingStatus('Done! File has been downloaded.')
     } catch (error) {
       console.error('Error processing file:', error)
-      if (error.response?.data) {
-        // Try to read the error message from the blob
-        const reader = new FileReader()
-        reader.onload = () => {
-          try {
-            const errorData = JSON.parse(reader.result)
-            setError(errorData.error || 'An error occurred while processing the file')
-          } catch (e) {
-            setError('An error occurred while processing the file')
-          }
-        }
-        reader.onerror = () => {
-          setError('An error occurred while processing the file')
-        }
-        reader.readAsText(error.response.data)
-      } else {
-        setError(error.message || 'An error occurred while processing the file')
+      if (error.response) {
+        console.error('Response data:', error.response.data)
+        console.error('Response status:', error.response.status)
       }
+      setError('Failed to process file. Please try again later.')
     } finally {
       setLoading(false)
       setProgress(0)

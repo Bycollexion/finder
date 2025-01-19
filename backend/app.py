@@ -13,14 +13,18 @@ from concurrent.futures import ThreadPoolExecutor
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://finder-production-4325.up.railway.app",
-    "https://finder-git-main-kolexander.vercel.app",
-    "https://finder-kolexander.vercel.app",
-    "https://finder.vercel.app"
-]}})
+CORS(app, resources={r"/api/*": {
+    "origins": [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://finder-production-4325.up.railway.app",
+        "https://finder-git-main-kolexander.vercel.app",
+        "https://finder-kolexander.vercel.app",
+        "https://finder.vercel.app"
+    ],
+    "methods": ["GET", "POST", "OPTIONS"],
+    "allow_headers": ["Content-Type"]
+}})
 
 # Initialize Anthropic client
 anthropic = Anthropic(
