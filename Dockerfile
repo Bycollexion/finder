@@ -2,10 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Copy requirements first for better caching
+COPY ./api/requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY . .
+# Copy the rest of the api directory
+COPY ./api .
 
 EXPOSE 8080
 
