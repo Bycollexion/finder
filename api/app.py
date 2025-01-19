@@ -122,9 +122,23 @@ async def get_employee_count_without_cache(company_name, country):
                 max_tokens=1024,
                 messages=[{
                     "role": "user",
-                    "content": f"""Please tell me the approximate number of employees that {company_name} has in {country}.
-                    I need ONLY a number as response. If you're not sure about the exact number but know it's in a certain range, provide the middle of that range.
-                    If you truly cannot find any information about the company's presence in that country, respond with 'Error retrieving data'."""
+                    "content": f"""I need to know specifically how many employees {company_name} has in their local office(s) in {country}.
+
+Important guidelines:
+1. Focus ONLY on direct employees in physical offices in {country}, not regional numbers
+2. Do not include contractors or outsourced staff
+3. For tech companies, only count employees in actual local offices, not remote workers serving the region
+4. If you're not completely certain about the current local office numbers, respond with 'Error retrieving data'
+5. Respond with ONLY a number, no text
+
+Example good responses:
+- "50" (if you're confident about the local office count)
+- "Error retrieving data" (if you're not certain about current local numbers)
+
+Example bad responses:
+- Regional numbers instead of local office counts
+- Outdated numbers from old sources
+- Estimates that include contractors or remote workers"""
                 }],
                 temperature=0
             )
