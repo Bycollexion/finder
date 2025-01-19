@@ -15,7 +15,7 @@ import {
 } from '@mui/material'
 import axios from 'axios'
 
-const API_BASE_URL = 'http://localhost:5006'  // Backend API URL
+const API_BASE_URL = import.meta.env.VITE_API_URL  // Backend API URL
 
 function App() {
   const [file, setFile] = useState(null)
