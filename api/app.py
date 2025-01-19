@@ -105,18 +105,17 @@ async def get_employee_count_without_cache(company_name, country):
 
         app.logger.info(f'Using API key starting with: {os.getenv("ANTHROPIC_API_KEY")[:8]}...')
         
-        async with anthropic.messages.create(
+        message = await anthropic.messages.create(
             model="claude-3-opus-20240229",
             max_tokens=1024,
             messages=[{
                 "role": "user",
                 "content": f"How many employees does {company_name} have in {country}? Please respond with ONLY a number. If you cannot find the information, respond with 'Error retrieving data'"
             }],
-            temperature=0,
-            stream=False
-        ) as message:
-            response = message.content[0].text
-            
+            temperature=0
+        )
+        
+        response = message.content[0].text
         app.logger.info(f'Claude API response for {company_name}: {response}')
         
         # Try to convert to number if possible
