@@ -1,10 +1,14 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "cd backend"
+buildCommand = "cd backend && pip install -r requirements.txt"
 
 [deploy]
-startCommand = "cd backend && gunicorn wsgi:app --bind 0.0.0.0:$PORT"
+startCommand = "python -m gunicorn --chdir backend wsgi:app --bind 0.0.0.0:$PORT --log-level debug"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+
+[env]
+PYTHONPATH = "/app/backend"
+PYTHONUNBUFFERED = "1"
