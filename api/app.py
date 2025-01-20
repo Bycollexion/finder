@@ -6,6 +6,8 @@ import redis
 import logging
 import httpx
 import asyncio
+from gevent import monkey
+monkey.patch_all()
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -235,7 +237,18 @@ async def process_companies(companies, country):
 @app.route('/')
 def index():
     """Health check endpoint"""
-    return jsonify({"status": "healthy"}), 200
+    try:
+        return jsonify({
+            "status": "healthy",
+            "message": "API is running",
+            "timestamp": str(asyncio.get_event_loop().time())
+        }), 200
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 @app.route('/api/countries', methods=['GET'])
 def get_countries():
@@ -298,4 +311,6 @@ async def process():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8000)))
+    # For local development
+    port = int(os.getenv('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=True)
