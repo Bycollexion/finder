@@ -1,20 +1,13 @@
-FROM python:3
+FROM python:3.9-slim
 
-# Run in unbuffered mode
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
-
-# Create and change to the app directory
 WORKDIR /app
 
-# Copy local code to the container image
-COPY . ./
+COPY requirements.txt .
+RUN pip install -r requirements.txt
 
-# Install project dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
 
-# Expose the port
-EXPOSE ${PORT}
+ENV PORT=8000
+EXPOSE 8000
 
-# Run the web service on container startup
-CMD gunicorn --workers=2 --bind=0.0.0.0:${PORT} main:app
+CMD gunicorn main:app --bind 0.0.0.0:8000 --log-level debug
