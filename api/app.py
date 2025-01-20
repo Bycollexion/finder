@@ -27,6 +27,12 @@ CORS(app)
 
 # Initialize API client
 proxycurl_api_key = os.environ.get("PROXYCURL_API_KEY", "bj1qdFmUqZR6Vkiyiny1LA")
+proxycurl_headers = {'Authorization': f'Bearer {proxycurl_api_key}'}
+
+# Gemini API Keys
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "default_key")
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+gemini_headers = {'Content-Type': 'application/json'}
 
 # Initialize Redis client
 redis_client = redis.Redis(
@@ -192,6 +198,49 @@ async def get_company_linkedin_url(company_name):
     
     return company_map.get(company_name.lower())
 
+async def get_employee_count_proxycurl(company_name):
+    """Get employee count from Proxycurl API"""
+    try:
+        url = f"https://nubela.co/proxycurl/api/linkedin/company/employees/count"
+        params = {'company_name': company_name}
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=proxycurl_headers, params=params)
+            
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('count', 0)
+        return None
+    except Exception as e:
+        logger.error(f"Proxycurl API error: {str(e)}")
+        return None
+
+async def get_employee_count_gemini(company_name):
+    """Get employee count using Gemini API"""
+    try:
+        prompt = {
+            "contents": [{
+                "parts": [{
+                    "text": f"How many employees does {company_name} have? Please respond with ONLY a number. If you're not sure, respond with 0."
+                }]
+            }]
+        }
+        
+        url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=prompt, headers=gemini_headers)
+            
+        if response.status_code == 200:
+            data = response.json()
+            text = data['candidates'][0]['content']['parts'][0]['text']
+            # Extract only numbers from response
+            count = ''.join(filter(str.isdigit, text))
+            return int(count) if count else 0
+        return 0
+    except Exception as e:
+        logger.error(f"Gemini API error: {str(e)}")
+        return 0
+
 async def get_employee_count(company_name, country):
     """Get employee count from local data first, fallback to API"""
     try:
@@ -217,6 +266,20 @@ async def get_employee_count(company_name, country):
         logger.error(f"Error getting company data for {company_name}: {str(e)}")
         return "Error retrieving data"
 
+async def get_employee_count_api(company_name):
+    """Get employee count using both APIs with fallback"""
+    # Try Proxycurl first
+    count = await get_employee_count_proxycurl(company_name)
+    
+    # If Proxycurl fails, try Gemini
+    if count is None:
+        count = await get_employee_count_gemini(company_name)
+        logger.info(f"Using Gemini API result for {company_name}: {count}")
+    else:
+        logger.info(f"Using Proxycurl API result for {company_name}: {count}")
+    
+    return count
+
 async def process_companies(companies, country):
     """Process list of companies and get their employee counts"""
     try:
@@ -224,6 +287,8 @@ async def process_companies(companies, country):
         for company in companies:
             logger.info(f"Processing company: {company}")
             count = await get_employee_count(company, country)
+            if count == "Data not available":
+                count = await get_employee_count_api(company)
             results.append({"company": company, "employee_count": count})
             logger.info(f"Processed {company}: {count}")
         return results
