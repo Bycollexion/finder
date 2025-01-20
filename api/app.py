@@ -88,24 +88,29 @@ async def get_employee_count_without_cache(company_name, country):
         
         try:
             logger.info('Making API call to Gemini...')
-            prompt = f"""I need to know approximately how many employees {company_name} has in their office(s) in {country}.
+            prompt = f"""Based on public information, news articles, and industry knowledge, estimate how many employees {company_name} has in {country}.
 
 Guidelines:
-1. Focus on employees in physical offices in {country}
-2. If you know a range (e.g., "50-100 employees"), provide the middle number (e.g., "75")
-3. For tech companies with both office and remote workers in {country}, include both if you can verify they are direct employees
-4. Respond with ONLY a number
-5. Only respond with 'Error retrieving data' if you have no reliable information about their presence in {country}
+1. Focus on employees in physical offices and verified remote workers in {country}
+2. Provide a reasonable estimate based on:
+   - Company size and presence in {country}
+   - Industry standards and market position
+   - Recent news or reports
+3. If you know a range (e.g., "50-100"), provide the middle number
+4. Only respond with 'Error retrieving data' if the company has no known presence in {country}
 
-For context:
-- Major tech companies (Google, Meta/Facebook, etc.) typically have 50-500 employees in their {country} offices
-- Regional companies (like Singtel, Jobstreet) may have larger local presence
-- Include only employees, not contractors
+Company Size Guidelines for {country}:
+- Large tech companies (Google, Meta, Amazon): typically 50-300 employees
+- Regional tech companies (Grab, Lazada): typically 200-1000 employees
+- Local companies: varies by industry and size
+- Startups: typically 10-50 employees
 
 Example responses:
-- "75" (if you know it's between 50-100)
-- "200" (if you have a reliable source)
-- "Error retrieving data" (if no reliable information available)"""
+- "75" (if estimated between 50-100)
+- "250" (if a larger regional presence)
+- "Error retrieving data" (only if no presence in the country)
+
+Respond with ONLY a number or 'Error retrieving data'."""
 
             response = model.generate_content(prompt)
             
