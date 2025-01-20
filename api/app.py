@@ -91,15 +91,39 @@ async def get_employee_count_from_proxycurl(company_name):
             response = await client.get(api_endpoint, params=params, headers=headers)
             response.raise_for_status()
             data = response.json()
+            logger.info(f"Raw API response for {company_name}: {data}")
             
             # Get employee count from response
+            if 'error' in data:
+                logger.error(f"API error for {company_name}: {data['error']}")
+                return "Error retrieving data"
+                
             employee_count = data.get('employee_count')
             if employee_count:
+                logger.info(f"Found employee count for {company_name}: {employee_count}")
                 return str(employee_count)
+                
+            # Try alternative fields
+            size_range = data.get('company_size_on_linkedin')
+            if size_range:
+                logger.info(f"Found company size range for {company_name}: {size_range}")
+                # Convert range to number (e.g., "1001-5000" -> "3000")
+                try:
+                    range_parts = size_range.split('-')
+                    if len(range_parts) == 2:
+                        min_val = int(range_parts[0].replace(',', ''))
+                        max_val = int(range_parts[1].replace(',', ''))
+                        avg = (min_val + max_val) // 2
+                        logger.info(f"Calculated average size for {company_name}: {avg}")
+                        return str(avg)
+                except Exception as e:
+                    logger.error(f"Error parsing size range for {company_name}: {e}")
+                    
+            logger.error(f"No employee count found in response for {company_name}")
             return "Error retrieving data"
             
     except Exception as e:
-        logger.error(f"Error getting company data: {str(e)}")
+        logger.error(f"Error getting company data for {company_name}: {str(e)}")
         return "Error retrieving data"
 
 async def get_employee_count_without_cache(company_name, country):
