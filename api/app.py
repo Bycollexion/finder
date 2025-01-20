@@ -4,6 +4,7 @@ import csv
 import json
 import redis
 import logging
+import httpx
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -27,8 +28,10 @@ app.config['PROPAGATE_EXCEPTIONS'] = True
 app.config['CORS_HEADERS'] = 'Content-Type'
 app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
-# Initialize Gemini API
+# Initialize API clients
 api_key = os.environ.get("GOOGLE_API_KEY")
+proxycurl_api_key = os.environ.get("PROXYCURL_API_KEY", "bj1qdFmUqZR6Vkiyiny1LA")
+
 if not api_key:
     logger.error("No GOOGLE_API_KEY found in environment variables!")
 else:
@@ -53,6 +56,55 @@ ASIAN_AUSTRALIAN_COUNTRIES = [
     "Singapore", "Thailand", "Vietnam", "Philippines", "Australia",
     "New Zealand"
 ]
+
+async def get_company_linkedin_url(company_name, country):
+    """Get LinkedIn company URL using Proxycurl Company Search API"""
+    try:
+        search_url = "https://nubela.co/proxycurl/api/linkedin/company/search"
+        params = {
+            'company_name': company_name,
+            'country': country
+        }
+        headers = {'Authorization': f'Bearer {proxycurl_api_key}'}
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(search_url, params=params, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data and len(data) > 0:
+                # Get the first result's URL
+                return data[0].get('url')
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error searching company URL: {str(e)}")
+        return None
+
+async def get_employee_count_from_proxycurl(company_url):
+    """Get employee count from Proxycurl Company Profile API"""
+    try:
+        if not company_url:
+            return "Error retrieving data"
+            
+        api_endpoint = "https://nubela.co/proxycurl/api/linkedin/company"
+        params = {'url': company_url}
+        headers = {'Authorization': f'Bearer {proxycurl_api_key}'}
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(api_endpoint, params=params, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Get employee count from response
+            employee_count = data.get('employee_count')
+            if employee_count:
+                return str(employee_count)
+            return "Error retrieving data"
+            
+    except Exception as e:
+        logger.error(f"Error getting company data: {str(e)}")
+        return "Error retrieving data"
 
 async def get_employee_count(company_name, country):
     try:
@@ -84,8 +136,17 @@ async def get_employee_count(company_name, country):
 
 async def get_employee_count_without_cache(company_name, country):
     try:
-        logger.info(f'Querying Gemini API for {company_name} in {country}')
+        logger.info(f'Getting employee count for {company_name} in {country}')
         
+        # First try Proxycurl
+        company_url = await get_company_linkedin_url(company_name, country)
+        if company_url:
+            count = await get_employee_count_from_proxycurl(company_url)
+            if count != "Error retrieving data":
+                return count
+        
+        # Fallback to Gemini if Proxycurl fails
+        logger.info('Proxycurl failed, falling back to Gemini...')
         try:
             logger.info('Making API call to Gemini...')
             prompt = f"""Based on public information, news articles, and industry knowledge, estimate how many employees {company_name} has in {country}.
@@ -136,7 +197,7 @@ Respond with ONLY a number or 'Error retrieving data'."""
             return f"Error: API call failed - {str(api_error)}"
 
     except Exception as e:
-        logger.error(f'Error calling Gemini API: {str(e)}')
+        logger.error(f'Error getting employee count: {str(e)}')
         logger.error(f'Error type: {type(e).__name__}')
         logger.error(f'Full error details: {e.__dict__}')
         return f"Error: {str(e)}"
