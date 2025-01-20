@@ -51,35 +51,37 @@ SUPPORTED_COUNTRIES = [
     "New Zealand"
 ]
 
-async def get_company_linkedin_url(company_name, country):
-    """Get LinkedIn company URL using Proxycurl Company Search API"""
-    try:
-        search_url = "https://nubela.co/proxycurl/api/linkedin/company/search"
-        params = {
-            'company_name': company_name,
-            'country': country
-        }
-        headers = {'Authorization': f'Bearer {proxycurl_api_key}'}
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(search_url, params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            
-            if data and len(data) > 0:
-                # Get the first result's URL
-                return data[0].get('url')
-            return None
-            
-    except Exception as e:
-        logger.error(f"Error searching company URL: {str(e)}")
-        return None
+async def get_company_linkedin_url(company_name):
+    """Convert company name to LinkedIn vanity name"""
+    # Map of common company names to their LinkedIn vanity names
+    company_map = {
+        'google': 'google',
+        'facebook': 'meta',
+        'meta': 'meta',
+        'amazon': 'amazon',
+        'linkedin': 'linkedin',
+        'linkedln': 'linkedin',
+        'jobstreet': 'jobstreet-com',
+        'seek': 'seek',
+        'jobs db': 'jobsdb',
+        'jobsdb': 'jobsdb',
+        'singtel': 'singtel'
+    }
+    
+    return company_map.get(company_name.lower())
 
-async def get_employee_count_from_proxycurl(company_url):
+async def get_employee_count_from_proxycurl(company_name):
     """Get employee count from Proxycurl Company Profile API"""
     try:
-        if not company_url:
+        # Get company vanity name
+        vanity_name = await get_company_linkedin_url(company_name)
+        if not vanity_name:
+            logger.error(f"No vanity name mapping found for {company_name}")
             return "Error retrieving data"
+            
+        # Construct LinkedIn company URL
+        company_url = f"https://www.linkedin.com/company/{vanity_name}/"
+        logger.info(f"Using LinkedIn URL: {company_url}")
             
         api_endpoint = "https://nubela.co/proxycurl/api/linkedin/company"
         params = {'url': company_url}
@@ -103,15 +105,7 @@ async def get_employee_count_from_proxycurl(company_url):
 async def get_employee_count_without_cache(company_name, country):
     try:
         logger.info(f'Getting employee count for {company_name} in {country}')
-        
-        # Try to find company on LinkedIn
-        company_url = await get_company_linkedin_url(company_name, country)
-        if company_url:
-            count = await get_employee_count_from_proxycurl(company_url)
-            return count
-        
-        return "Error retrieving data"
-
+        return await get_employee_count_from_proxycurl(company_name)
     except Exception as e:
         logger.error(f'Error getting employee count: {str(e)}')
         logger.error(f'Error type: {type(e).__name__}')
