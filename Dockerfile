@@ -5,8 +5,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY api/ api/
+COPY . .
 
-ENV PORT=8000
-
-CMD cd api && gunicorn wsgi:app --bind 0.0.0.0:$PORT
+CMD ["gunicorn", "main:app"]
