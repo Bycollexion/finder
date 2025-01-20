@@ -1,1 +1,1 @@
-web: waitress-serve --listen=*:$PORT main:app
+web: gunicorn --bind 0.0.0.0:$PORT main:app
