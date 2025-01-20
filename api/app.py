@@ -5,6 +5,7 @@ import json
 import redis
 import logging
 import httpx
+import asyncio
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -51,6 +52,11 @@ SUPPORTED_COUNTRIES = [
     "New Zealand"
 ]
 
+# Rate limiting settings
+RATE_LIMIT_DELAY = 1.0  # Delay between API calls in seconds
+MAX_RETRIES = 3  # Maximum number of retries for rate-limited requests
+RETRY_DELAY = 5  # Delay between retries in seconds
+
 async def get_company_linkedin_url(company_name):
     """Convert company name to LinkedIn vanity name"""
     # Map of common company names to their LinkedIn vanity names
@@ -71,7 +77,7 @@ async def get_company_linkedin_url(company_name):
     return company_map.get(company_name.lower())
 
 async def get_employee_count_from_proxycurl(company_name):
-    """Get employee count from Proxycurl Company Profile API"""
+    """Get employee count from Proxycurl Company Profile API with retries"""
     try:
         # Get company vanity name
         vanity_name = await get_company_linkedin_url(company_name)
@@ -87,40 +93,67 @@ async def get_employee_count_from_proxycurl(company_name):
         params = {'url': company_url}
         headers = {'Authorization': f'Bearer {proxycurl_api_key}'}
         
-        async with httpx.AsyncClient() as client:
-            response = await client.get(api_endpoint, params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            logger.info(f"Raw API response for {company_name}: {data}")
-            
-            # Get employee count from response
-            if 'error' in data:
-                logger.error(f"API error for {company_name}: {data['error']}")
-                return "Error retrieving data"
-                
-            employee_count = data.get('employee_count')
-            if employee_count:
-                logger.info(f"Found employee count for {company_name}: {employee_count}")
-                return str(employee_count)
-                
-            # Try alternative fields
-            size_range = data.get('company_size_on_linkedin')
-            if size_range:
-                logger.info(f"Found company size range for {company_name}: {size_range}")
-                # Convert range to number (e.g., "1001-5000" -> "3000")
-                try:
-                    range_parts = size_range.split('-')
-                    if len(range_parts) == 2:
-                        min_val = int(range_parts[0].replace(',', ''))
-                        max_val = int(range_parts[1].replace(',', ''))
-                        avg = (min_val + max_val) // 2
-                        logger.info(f"Calculated average size for {company_name}: {avg}")
-                        return str(avg)
-                except Exception as e:
-                    logger.error(f"Error parsing size range for {company_name}: {e}")
+        retries = 0
+        while retries < MAX_RETRIES:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(api_endpoint, params=params, headers=headers)
                     
-            logger.error(f"No employee count found in response for {company_name}")
-            return "Error retrieving data"
+                    # If rate limited, wait and retry
+                    if response.status_code == 429:
+                        retries += 1
+                        if retries < MAX_RETRIES:
+                            logger.info(f"Rate limited, waiting {RETRY_DELAY} seconds before retry {retries}/{MAX_RETRIES}")
+                            await asyncio.sleep(RETRY_DELAY)
+                            continue
+                        else:
+                            logger.error("Max retries reached for rate limit")
+                            return "Error: Rate limit exceeded"
+                    
+                    response.raise_for_status()
+                    data = response.json()
+                    logger.info(f"Raw API response for {company_name}: {data}")
+                    
+                    # Get employee count from response
+                    if 'error' in data:
+                        logger.error(f"API error for {company_name}: {data['error']}")
+                        return "Error retrieving data"
+                        
+                    employee_count = data.get('employee_count')
+                    if employee_count:
+                        logger.info(f"Found employee count for {company_name}: {employee_count}")
+                        return str(employee_count)
+                        
+                    # Try alternative fields
+                    size_range = data.get('company_size_on_linkedin')
+                    if size_range:
+                        logger.info(f"Found company size range for {company_name}: {size_range}")
+                        # Convert range to number (e.g., "1001-5000" -> "3000")
+                        try:
+                            range_parts = size_range.split('-')
+                            if len(range_parts) == 2:
+                                min_val = int(range_parts[0].replace(',', ''))
+                                max_val = int(range_parts[1].replace(',', ''))
+                                avg = (min_val + max_val) // 2
+                                logger.info(f"Calculated average size for {company_name}: {avg}")
+                                return str(avg)
+                        except Exception as e:
+                            logger.error(f"Error parsing size range for {company_name}: {e}")
+                            
+                    logger.error(f"No employee count found in response for {company_name}")
+                    return "Error retrieving data"
+                    
+            except Exception as e:
+                logger.error(f"Error getting company data for {company_name}: {str(e)}")
+                retries += 1
+                if retries < MAX_RETRIES:
+                    logger.info(f"Error occurred, retrying in {RETRY_DELAY} seconds ({retries}/{MAX_RETRIES})")
+                    await asyncio.sleep(RETRY_DELAY)
+                else:
+                    return "Error retrieving data"
+            
+            # Add delay between requests to respect rate limits
+            await asyncio.sleep(RATE_LIMIT_DELAY)
             
     except Exception as e:
         logger.error(f"Error getting company data for {company_name}: {str(e)}")
@@ -170,26 +203,18 @@ async def get_employee_count(company_name, country):
 
 async def process_companies(companies, country):
     try:
-        logger.info(f'Processing {len(companies)} companies for {country}')
         results = []
-        
         for company in companies:
-            logger.info(f'Processing company: {company}')
+            logger.info(f"Processing company: {company}")
             count = await get_employee_count(company, country)
-            logger.info(f'Result for {company}: {count}')
-            results.append({
-                'company': company,
-                'employee_count': count
-            })
-        
-        logger.info(f'Finished processing all companies. Results: {results}')
+            results.append({"company": company, "employee_count": count})
+            logger.info(f"Processed {company}: {count}")
+            # Add delay between companies to respect rate limits
+            await asyncio.sleep(RATE_LIMIT_DELAY)
         return results
-        
     except Exception as e:
-        logger.error(f'Error processing companies: {str(e)}')
-        logger.error(f'Error type: {type(e).__name__}')
-        logger.error(f'Error details: {e.__dict__}')
-        return [{'company': company, 'employee_count': 'Error retrieving data'} for company in companies]
+        logger.error(f"Error processing companies: {str(e)}")
+        return []
 
 @app.route('/')
 def index():
