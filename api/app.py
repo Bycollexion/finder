@@ -23,10 +23,8 @@ load_dotenv(override=False)
 app = Flask(__name__)
 CORS(app)
 
-# Configure for async operation
-app.config['PROPAGATE_EXCEPTIONS'] = True
+# Configure CORS
 app.config['CORS_HEADERS'] = 'Content-Type'
-app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
 # Initialize API client
 proxycurl_api_key = os.environ.get("PROXYCURL_API_KEY", "bj1qdFmUqZR6Vkiyiny1LA")
@@ -236,7 +234,8 @@ async def process_companies(companies, country):
 
 @app.route('/')
 def index():
-    return "Company Employee Tracker API"
+    """Health check endpoint"""
+    return jsonify({"status": "healthy"}), 200
 
 @app.route('/api/countries', methods=['GET'])
 def get_countries():
@@ -299,10 +298,4 @@ async def process():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # For local development
-    if os.getenv('FLASK_ENV') == 'development':
-        app.run(debug=True)
-    else:
-        # For production on Railway
-        port = int(os.getenv("PORT", 8000))
-        app.run(host="0.0.0.0", port=port)
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8000)))
