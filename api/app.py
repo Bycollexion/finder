@@ -19,14 +19,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env only if they don't exist
-load_dotenv(override=False)
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
-
-# Configure CORS
-app.config['CORS_HEADERS'] = 'Content-Type'
 
 # Initialize API client
 proxycurl_api_key = os.environ.get("PROXYCURL_API_KEY", "bj1qdFmUqZR6Vkiyiny1LA")
@@ -237,18 +234,10 @@ async def process_companies(companies, country):
 @app.route('/')
 def index():
     """Health check endpoint"""
-    try:
-        return jsonify({
-            "status": "healthy",
-            "message": "API is running",
-            "timestamp": str(asyncio.get_event_loop().time())
-        }), 200
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
+    return jsonify({
+        "status": "healthy",
+        "message": "API is running"
+    }), 200
 
 @app.route('/api/countries', methods=['GET'])
 def get_countries():
@@ -311,6 +300,5 @@ async def process():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # For local development
     port = int(os.getenv('PORT', 8000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port)
