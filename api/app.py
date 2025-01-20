@@ -25,13 +25,21 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# Initialize API client
-proxycurl_api_key = os.environ.get("PROXYCURL_API_KEY", "bj1qdFmUqZR6Vkiyiny1LA")
-proxycurl_headers = {'Authorization': f'Bearer {proxycurl_api_key}'}
-
-# Gemini API Keys
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "default_key")
+# API Keys
+PROXYCURL_API_KEY = os.getenv("PROXYCURL_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+
+if not PROXYCURL_API_KEY:
+    logger.warning("PROXYCURL_API_KEY not set, using default key")
+    PROXYCURL_API_KEY = "bj1qdFmUqZR6Vkiyiny1LA"
+
+if not GEMINI_API_KEY:
+    logger.warning("GEMINI_API_KEY not set, using default key")
+    GEMINI_API_KEY = "AIzaSyCclUQQq7_Dvob4T3VAgPJILRWHVCqmJxs"
+
+# Initialize API client
+proxycurl_headers = {'Authorization': f'Bearer {PROXYCURL_API_KEY}'}
 gemini_headers = {'Content-Type': 'application/json'}
 
 # Initialize Redis client
