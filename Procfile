@@ -1,1 +1,1 @@
-web: gunicorn main:app --bind 0.0.0.0:8000 --log-level debug
+web: cd api && gunicorn wsgi:app --bind 0.0.0.0:$PORT
