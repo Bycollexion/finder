@@ -1,10 +1,16 @@
-FROM python:3.9
+FROM python:3
 
+# Run in unbuffered mode
+ENV PYTHONUNBUFFERED=1
+
+# Create and change to the app directory
 WORKDIR /app
 
-COPY requirements.txt requirements.txt
-RUN pip3 install -r requirements.txt
+# Copy local code to the container image
+COPY . ./
 
-COPY . .
+# Install project dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["gunicorn", "main:app"]
+# Run the web service on container startup
+CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "main:app"]
