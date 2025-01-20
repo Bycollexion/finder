@@ -8,7 +8,6 @@ import httpx
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
-import google.generativeai as genai
 
 # Configure logging
 logging.basicConfig(
@@ -28,17 +27,8 @@ app.config['PROPAGATE_EXCEPTIONS'] = True
 app.config['CORS_HEADERS'] = 'Content-Type'
 app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
-# Initialize API clients
-api_key = os.environ.get("GOOGLE_API_KEY")
+# Initialize API client
 proxycurl_api_key = os.environ.get("PROXYCURL_API_KEY", "bj1qdFmUqZR6Vkiyiny1LA")
-
-if not api_key:
-    logger.error("No GOOGLE_API_KEY found in environment variables!")
-else:
-    logger.info(f"GOOGLE_API_KEY found: ***{api_key[-4:]}")
-    
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel('gemini-pro')
 
 # Initialize Redis client
 redis_client = redis.Redis(
@@ -50,10 +40,14 @@ redis_client = redis.Redis(
     decode_responses=True
 )
 
-# List of Asian and Australian countries
-ASIAN_AUSTRALIAN_COUNTRIES = [
-    "China", "Japan", "South Korea", "India", "Indonesia", "Malaysia",
-    "Singapore", "Thailand", "Vietnam", "Philippines", "Australia",
+SUPPORTED_COUNTRIES = [
+    "Malaysia",
+    "Singapore",
+    "Indonesia",
+    "Thailand",
+    "Vietnam",
+    "Philippines",
+    "Australia",
     "New Zealand"
 ]
 
@@ -106,101 +100,55 @@ async def get_employee_count_from_proxycurl(company_url):
         logger.error(f"Error getting company data: {str(e)}")
         return "Error retrieving data"
 
-async def get_employee_count(company_name, country):
-    try:
-        # Check cache first
-        cache_key = f"employee_count:{company_name.lower()}:{country.lower()}"
-        cached_result = redis_client.get(cache_key)
-        
-        if cached_result:
-            logger.info(f"Cache hit for {company_name} in {country}")
-            return cached_result
-            
-        logger.info(f"Cache miss - requesting employee count for {company_name} in {country}")
-        count = await get_employee_count_without_cache(company_name, country)
-        logger.info(f'Result for {company_name}: {count}')
-        
-        # Cache the result for 24 hours (86400 seconds)
-        if count.lower() != 'unknown':
-            redis_client.setex(cache_key, 86400, count)
-        
-        return count
-            
-    except redis.RedisError as e:
-        logger.error(f"Redis error: {str(e)}")
-        # Continue without caching if Redis is unavailable
-        return await get_employee_count_without_cache(company_name, country)
-    except Exception as e:
-        logger.error(f"Error getting employee count for {company_name}: {str(e)}")
-        return "Error retrieving data"
-
 async def get_employee_count_without_cache(company_name, country):
     try:
         logger.info(f'Getting employee count for {company_name} in {country}')
         
-        # First try Proxycurl
+        # Try to find company on LinkedIn
         company_url = await get_company_linkedin_url(company_name, country)
         if company_url:
             count = await get_employee_count_from_proxycurl(company_url)
-            if count != "Error retrieving data":
-                return count
+            return count
         
-        # Fallback to Gemini if Proxycurl fails
-        logger.info('Proxycurl failed, falling back to Gemini...')
-        try:
-            logger.info('Making API call to Gemini...')
-            prompt = f"""Based on public information, news articles, and industry knowledge, estimate how many employees {company_name} has in {country}.
-
-Guidelines:
-1. Focus on employees in physical offices and verified remote workers in {country}
-2. Provide a reasonable estimate based on:
-   - Company size and presence in {country}
-   - Industry standards and market position
-   - Recent news or reports
-3. If you know a range (e.g., "50-100"), provide the middle number
-4. Only respond with 'Error retrieving data' if the company has no known presence in {country}
-
-Company Size Guidelines for {country}:
-- Large tech companies (Google, Meta, Amazon): typically 50-300 employees
-- Regional tech companies (Grab, Lazada): typically 200-1000 employees
-- Local companies: varies by industry and size
-- Startups: typically 10-50 employees
-
-Example responses:
-- "75" (if estimated between 50-100)
-- "250" (if a larger regional presence)
-- "Error retrieving data" (only if no presence in the country)
-
-Respond with ONLY a number or 'Error retrieving data'."""
-
-            response = model.generate_content(prompt)
-            
-            logger.info(f'Raw API response: {response}')
-            result = response.text.strip()
-            logger.info(f'Gemini API response for {company_name}: {result}')
-            
-            # Try to convert to number if possible
-            try:
-                # Remove any commas and try to convert to int
-                cleaned_response = result.replace(',', '')
-                int(cleaned_response)
-                return cleaned_response
-            except ValueError:
-                if "error" in result.lower():
-                    return "Error retrieving data"
-                return result
-
-        except Exception as api_error:
-            logger.error(f'API call error: {str(api_error)}')
-            logger.error(f'API error type: {type(api_error).__name__}')
-            logger.error(f'API error details: {api_error.__dict__}')
-            return f"Error: API call failed - {str(api_error)}"
+        return "Error retrieving data"
 
     except Exception as e:
         logger.error(f'Error getting employee count: {str(e)}')
         logger.error(f'Error type: {type(e).__name__}')
         logger.error(f'Full error details: {e.__dict__}')
-        return f"Error: {str(e)}"
+        return "Error retrieving data"
+
+async def get_employee_count(company_name, country):
+    try:
+        # Check cache first
+        cache_key = f"{company_name}_{country}"
+        try:
+            cached_result = redis_client.get(cache_key)
+            if cached_result:
+                logger.info(f'Cache hit for {company_name}')
+                return cached_result
+        except Exception as redis_error:
+            logger.error(f'Redis error: {str(redis_error)}')
+            # Continue without cache if Redis is not available
+            pass
+
+        # Get fresh data
+        result = await get_employee_count_without_cache(company_name, country)
+        
+        # Cache the result
+        try:
+            if result and result != "Error retrieving data":
+                redis_client.set(cache_key, result)
+                redis_client.expire(cache_key, 60 * 60 * 24)  # Cache for 24 hours
+        except Exception as redis_error:
+            logger.error(f'Redis caching error: {str(redis_error)}')
+            # Continue without caching if Redis is not available
+            pass
+            
+        return result
+    except Exception as e:
+        logger.error(f'Error in get_employee_count: {str(e)}')
+        return "Error retrieving data"
 
 async def process_companies(companies, country):
     try:
@@ -236,7 +184,7 @@ def index():
 @app.route('/api/countries')
 def get_countries():
     try:
-        return jsonify(ASIAN_AUSTRALIAN_COUNTRIES)
+        return jsonify(SUPPORTED_COUNTRIES)
     except Exception as e:
         logger.error(f"Error in get_countries route: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
