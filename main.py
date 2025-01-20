@@ -7,11 +7,7 @@ CORS(app)
 
 @app.route('/')
 def index():
-    return jsonify({"message": "Welcome to the API"}), 200
-
-@app.route('/health')
-def health():
-    """Health check endpoint for Railway"""
+    """Default health check endpoint for Railway"""
     return jsonify({"status": "healthy"}), 200
 
 @app.route('/test')
