@@ -41,6 +41,8 @@ model = genai.GenerativeModel('gemini-pro')
 redis_client = redis.Redis(
     host=os.getenv('REDIS_HOST', 'localhost'),
     port=int(os.getenv('REDIS_PORT', 6379)),
+    username=os.getenv('REDIS_USER'),
+    password=os.getenv('REDIS_PASSWORD'),
     db=0,
     decode_responses=True
 )
@@ -105,7 +107,7 @@ Example responses:
 - "200" (if you have a reliable source)
 - "Error retrieving data" (if no reliable information available)"""
 
-            response = await model.generate_content(prompt)
+            response = model.generate_content(prompt)
             
             logger.info(f'Raw API response: {response}')
             result = response.text.strip()
