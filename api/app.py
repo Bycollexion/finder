@@ -299,5 +299,10 @@ async def process():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 8000))
-    app.run(host='0.0.0.0', port=port)
+    # For local development
+    if os.getenv('FLASK_ENV') == 'development':
+        app.run(debug=True)
+    else:
+        # For production on Railway
+        port = int(os.getenv("PORT", 8000))
+        app.run(host="0.0.0.0", port=port)
