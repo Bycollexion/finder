@@ -8,6 +8,5 @@ RUN pip install -r requirements.txt
 COPY api/ api/
 
 ENV PORT=8000
-ENV PYTHONPATH=/app/api
 
-CMD cd api && gunicorn wsgi:application --bind 0.0.0.0:$PORT
+CMD cd api && gunicorn test_app:app --bind 0.0.0.0:$PORT
