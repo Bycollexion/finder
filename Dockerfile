@@ -8,11 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY api/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY api/ .
+COPY api/ api/
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -21,5 +21,5 @@ ENV PORT=8080
 # Expose port
 EXPOSE 8080
 
-# Run with uvicorn
-CMD ["uvicorn", "wsgi:application", "--host", "0.0.0.0", "--port", "8080", "--log-level", "info"]
+# Command to run the application
+CMD cd api && gunicorn app:app --worker-class gevent --bind 0.0.0.0:$PORT
