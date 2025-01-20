@@ -7,8 +7,7 @@ import logging
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
-from anthropic import AsyncAnthropic
-from concurrent.futures import ThreadPoolExecutor
+import google.generativeai as genai
 
 # Configure logging
 logging.basicConfig(
@@ -28,52 +27,35 @@ app.config['PROPAGATE_EXCEPTIONS'] = True
 app.config['CORS_HEADERS'] = 'Content-Type'
 app.config['CORS_RESOURCES'] = {r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}}
 
-# Initialize Anthropic client
-# Check both direct and Finder-grouped environment variables
-api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("Finder_ANTHROPIC_API_KEY")
+# Initialize Gemini API
+api_key = os.environ.get("GOOGLE_API_KEY")
 if not api_key:
-    logger.error("No ANTHROPIC_API_KEY found in environment variables!")
+    logger.error("No GOOGLE_API_KEY found in environment variables!")
 else:
-    logger.info(f"ANTHROPIC_API_KEY found: ***{api_key[-4:]}")
+    logger.info(f"GOOGLE_API_KEY found: ***{api_key[-4:]}")
     
-anthropic = AsyncAnthropic(api_key=api_key)
+genai.configure(api_key=api_key)
+model = genai.GenerativeModel('gemini-pro')
 
 # Initialize Redis client
 redis_client = redis.Redis(
     host=os.getenv('REDIS_HOST', 'localhost'),
     port=int(os.getenv('REDIS_PORT', 6379)),
-    username=os.getenv('REDIS_USER', 'default'),
-    password=os.getenv('REDIS_PASSWORD'),
     db=0,
     decode_responses=True
 )
 
-# Create a thread pool for parallel processing
-executor = ThreadPoolExecutor(max_workers=10)
-
 # List of Asian and Australian countries
 ASIAN_AUSTRALIAN_COUNTRIES = [
-    "Australia",
-    "China",
-    "India",
-    "Japan",
-    "South Korea",
-    "Singapore",
-    "Malaysia",
-    "Indonesia",
-    "Thailand",
-    "Vietnam",
-    "Philippines",
+    "China", "Japan", "South Korea", "India", "Indonesia", "Malaysia",
+    "Singapore", "Thailand", "Vietnam", "Philippines", "Australia",
     "New Zealand"
 ]
-
-def get_cache_key(company_name, country):
-    return f"employee_count:{company_name.lower()}:{country.lower()}"
 
 async def get_employee_count(company_name, country):
     try:
         # Check cache first
-        cache_key = get_cache_key(company_name, country)
+        cache_key = f"employee_count:{company_name.lower()}:{country.lower()}"
         cached_result = redis_client.get(cache_key)
         
         if cached_result:
@@ -81,27 +63,14 @@ async def get_employee_count(company_name, country):
             return cached_result
             
         logger.info(f"Cache miss - requesting employee count for {company_name} in {country}")
-        completion = await anthropic.completions.create(
-            model="claude-3-opus-20240229",
-            max_tokens_to_sample=300,
-            temperature=0,
-            system="You are a helpful assistant with accurate knowledge about major companies and their employee counts in different countries. When you know the approximate number, provide it. Only respond with 'Unknown' if you really have no information about the company's presence in that country.",
-            prompt=f"\n\nHuman: How many employees does {company_name} have in {country}? Respond with ONLY a number. If you're absolutely not sure, respond with 'Unknown'. For major tech companies like Google, Meta/Facebook, Amazon, etc., you should have approximate numbers. For regional companies like Singtel, Seek, JobStreet, etc., focus on their presence in the specified country.\n\nAssistant:"
-        )
-        response = completion.completion.strip()
-        logger.info(f"Claude response for {company_name}: {response}")
+        count = await get_employee_count_without_cache(company_name, country)
+        logger.info(f'Result for {company_name}: {count}')
         
         # Cache the result for 24 hours (86400 seconds)
-        if response.lower() != 'unknown':
-            redis_client.setex(cache_key, 86400, response)
+        if count.lower() != 'unknown':
+            redis_client.setex(cache_key, 86400, count)
         
-        try:
-            int(response)
-            return response
-        except ValueError:
-            if response.lower() == 'unknown':
-                return 'No data available'
-            return response
+        return count
             
     except redis.RedisError as e:
         logger.error(f"Redis error: {str(e)}")
@@ -113,16 +82,11 @@ async def get_employee_count(company_name, country):
 
 async def get_employee_count_without_cache(company_name, country):
     try:
-        logger.info(f'Querying Claude API for {company_name} in {country}')
+        logger.info(f'Querying Gemini API for {company_name} in {country}')
         
         try:
-            logger.info('Making API call to Claude...')
-            message = await anthropic.messages.create(
-                model="claude-3-sonnet-20240229",
-                max_tokens=1024,
-                messages=[{
-                    "role": "user",
-                    "content": f"""I need to know approximately how many employees {company_name} has in their office(s) in {country}.
+            logger.info('Making API call to Gemini...')
+            prompt = f"""I need to know approximately how many employees {company_name} has in their office(s) in {country}.
 
 Guidelines:
 1. Focus on employees in physical offices in {country}
@@ -140,24 +104,23 @@ Example responses:
 - "75" (if you know it's between 50-100)
 - "200" (if you have a reliable source)
 - "Error retrieving data" (if no reliable information available)"""
-                }],
-                temperature=0
-            )
+
+            response = await model.generate_content(prompt)
             
-            logger.info(f'Raw API response: {message}')
-            response = message.content[0].text.strip()
-            logger.info(f'Claude API response for {company_name}: {response}')
+            logger.info(f'Raw API response: {response}')
+            result = response.text.strip()
+            logger.info(f'Gemini API response for {company_name}: {result}')
             
             # Try to convert to number if possible
             try:
                 # Remove any commas and try to convert to int
-                cleaned_response = response.replace(',', '')
+                cleaned_response = result.replace(',', '')
                 int(cleaned_response)
                 return cleaned_response
             except ValueError:
-                if "error" in response.lower():
+                if "error" in result.lower():
                     return "Error retrieving data"
-                return response
+                return result
 
         except Exception as api_error:
             logger.error(f'API call error: {str(api_error)}')
@@ -166,7 +129,7 @@ Example responses:
             return f"Error: API call failed - {str(api_error)}"
 
     except Exception as e:
-        logger.error(f'Error calling Claude API: {str(e)}')
+        logger.error(f'Error calling Gemini API: {str(e)}')
         logger.error(f'Error type: {type(e).__name__}')
         logger.error(f'Full error details: {e.__dict__}')
         return f"Error: {str(e)}"
@@ -178,7 +141,7 @@ async def process_companies(companies, country):
         
         for company in companies:
             logger.info(f'Processing company: {company}')
-            count = await get_employee_count_without_cache(company, country)
+            count = await get_employee_count(company, country)
             logger.info(f'Result for {company}: {count}')
             results.append({
                 'company': company,
