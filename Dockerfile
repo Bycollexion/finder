@@ -1,12 +1,10 @@
-FROM python:3.9-slim
+FROM python:3.9
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY requirements.txt requirements.txt
+RUN pip3 install -r requirements.txt
 
-COPY api/ api/
+COPY . .
 
-ENV PORT=8000
-
-CMD cd api && gunicorn test_app:app --bind 0.0.0.0:$PORT
+CMD ["gunicorn", "main:app"]
