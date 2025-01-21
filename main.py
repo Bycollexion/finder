@@ -23,26 +23,32 @@ CORS(app, resources={
 def search_web_info(company_name, country):
     """Search the web using multiple specific queries"""
     try:
-        # Build a combined query for better results
-        query = f"{company_name} {country} office employees headquarters staff count 2024 2023"
+        # Build queries to check multiple sources
+        queries = [
+            f"site:linkedin.com {company_name} {country} employees company size",
+            f"{company_name} {country} office employees staff size 2024 2023",
+            f"{company_name} {country} headquarters number of employees"
+        ]
         
-        # Use the search_web tool directly
-        try:
-            # Import the search_web function from cascade
-            from cascade.tools.search_web import search_web
-            results = search_web(query=query)
-            
-            if results and len(results) > 0:
-                all_results = []
-                for result in results[:3]:  # Get top 3 results
-                    all_results.append(f"Source: {result.get('title', 'Unknown')}")
-                    all_results.append(result.get('snippet', 'No snippet available'))
-                    all_results.append("")
-                return "\n".join(all_results)
-        except ImportError:
-            print("Could not import search_web tool, using regional knowledge only")
-            pass
+        all_results = []
+        for query in queries:
+            try:
+                results = search_web(query=query)
+                if results and len(results) > 0:
+                    for result in results[:2]:  # Get top 2 results per query
+                        title = result.get('title', '')
+                        snippet = result.get('snippet', '')
+                        # Only add if it contains employee-related information
+                        if any(term in (title + snippet).lower() for term in ['employees', 'staff', 'company size', 'team size', 'headcount']):
+                            all_results.append(f"Source: {title}")
+                            all_results.append(snippet)
+                            all_results.append("")
+            except Exception as e:
+                print(f"Error with query '{query}': {str(e)}")
+                continue
         
+        if all_results:
+            return "\n".join(all_results)
         return "Using regional knowledge for estimation"
     except Exception as e:
         print(f"Error during web search: {str(e)}")
@@ -163,46 +169,50 @@ def process_file():
                         
                         When determining confidence and employee count:
                         
-                        HIGH confidence (must meet one of these):
-                        - Recent company press release or official statement about employee count
-                        - Recent (within 3 months) news article citing company officials
-                        - Official job site showing office size
+                        HIGH confidence requirements (must have specific numbers):
+                        - LinkedIn company page showing exact employee count for the country
+                        - Company's official career page showing local team size
+                        - Recent news article with exact numbers from company officials
+                        - Annual reports or official documents with country breakdown
                         
-                        MEDIUM confidence (must meet one of these):
-                        - Recent news articles without direct company quotes
-                        - Industry reports or analysis
-                        - Job posting information indicating team size
+                        MEDIUM confidence requirements:
+                        - LinkedIn showing employee range (e.g., 501-1000)
+                        - Recent job postings indicating department sizes
+                        - News articles mentioning approximate numbers
+                        - Industry reports with regional breakdowns
                         
-                        LOW confidence:
+                        LOW confidence (use only if no better source):
                         - Outdated information
-                        - Conflicting sources
-                        - Only global numbers without country breakdown
+                        - Global numbers without country breakdown
                         - Estimates without clear sources
                         
-                        For employee count, use this regional knowledge for Malaysia:
+                        For employee count in Malaysia:
                         
+                        VERIFIED RANGES (Use these with MEDIUM confidence if LinkedIn shows this range):
+                        - JobStreet: 501-1000 employees (LinkedIn verified)
+                        - Grab: >1000 employees (major tech hub)
+                        - Shopee: >1000 employees (major presence)
+                        - Lazada: >800 employees (significant presence)
+                        
+                        ESTIMATED RANGES (Use with LOW confidence):
                         TECH COMPANIES:
-                        - Google: 50-100 employees (mostly sales and support)
-                        - Meta/Facebook: 30-50 employees (sales office)
-                        - Amazon: 100-200 employees (mostly AWS)
-                        - LinkedIn: 20-40 employees (sales)
-                        
-                        REGIONAL TECH:
-                        - Grab: 1000-2000 employees (major tech hub)
-                        - Shopee: 1000-1500 employees (regional presence)
-                        - Lazada: 800-1200 employees (significant presence)
-                        - Sea Limited: 1000-1500 employees (major office)
+                        - Google Malaysia: 50-100 (sales/support)
+                        - Meta/Facebook: 30-50 (sales office)
+                        - Amazon: 100-200 (AWS focus)
+                        - LinkedIn: 20-40 (sales)
                         
                         OTHERS:
-                        - Singtel: 200-300 employees (telecoms)
-                        - GoTo: 100-200 employees (regional office)
-                        - Tokopedia: 50-100 employees (part of GoTo)
-                        - JobStreet: 200-300 employees (local operations)
-                        - Jobs DB: 50-100 employees (local team)
-                        - Seek: 100-150 employees (regional office)
+                        - Singtel: 200-300 (telecoms)
+                        - GoTo: 100-200 (regional)
+                        - Tokopedia: 50-100 (part of GoTo)
+                        - Jobs DB: 50-100 (local team)
+                        - Seek: 100-150 (regional)
                         
-                        If web search provides specific recent data, use that instead.
-                        Otherwise, use these ranges as estimates with LOW confidence."""},
+                        IMPORTANT RULES:
+                        1. If LinkedIn shows a specific range (e.g., 501-1000), use the middle of that range with MEDIUM confidence
+                        2. If you find a recent exact number from a reliable source, use it with HIGH confidence
+                        3. If you only have estimated ranges, use them with LOW confidence
+                        4. Always prefer actual data from web search over estimated ranges"""},
                         {"role": "user", "content": f"""How many employees does {company_name} have in {country}? 
                         Consider only full-time employees.
                         
