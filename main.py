@@ -9,9 +9,7 @@ CORS(app)
 
 @app.route('/', methods=['GET'])
 def index():
-    response = make_response(jsonify({"status": "healthy"}))
-    response.headers['Content-Type'] = 'application/json'
-    return response
+    return "OK"
 
 @app.route('/employee_count', methods=['POST'])
 def get_employee_count():
