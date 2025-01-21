@@ -4,10 +4,18 @@ import os
 import json
 import csv
 from io import StringIO
-from openai import OpenAI
+import openai
 
 app = Flask(__name__)
 CORS(app)
+
+# Log environment variables on startup
+print("=== Environment Variables ===")
+print(f"PORT: {os.environ.get('PORT', '(not set)')}")
+print(f"OPENAI_API_KEY set: {'yes' if os.environ.get('OPENAI_API_KEY') else 'no'}")
+if os.environ.get('OPENAI_API_KEY'):
+    print(f"OPENAI_API_KEY length: {len(os.environ.get('OPENAI_API_KEY'))}")
+print("=========================")
 
 @app.route('/')
 def index():
@@ -64,7 +72,7 @@ def process_file():
             return jsonify({"error": "OpenAI API key not configured"}), 500
             
         print(f"OpenAI API key found (length: {len(openai_api_key)})")
-        client = OpenAI(api_key=openai_api_key)
+        openai.api_key = openai_api_key
         
         # Process each company
         for row in csv_reader:
@@ -75,7 +83,7 @@ def process_file():
                 
             print(f"Processing company: {company_name}")
             try:
-                response = client.chat.completions.create(
+                response = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=[
                         {"role": "system", "content": "You are a helpful assistant that provides company information."},
@@ -103,8 +111,8 @@ def process_file():
                     function_call={"name": "get_employee_count"}
                 )
                 
-                function_call = response.choices[0].message.function_call
-                result = json.loads(function_call.arguments)
+                function_call = response['choices'][0]['message']['function_call']
+                result = json.loads(function_call['arguments'])
                 print(f"Got result for {company_name}: {result}")
                 
                 writer.writerow({
@@ -150,8 +158,8 @@ def get_employee_count():
             response.headers['Content-Type'] = 'application/json'
             return response
             
-        client = OpenAI(api_key=openai_api_key)
-        response = client.chat.completions.create(
+        openai.api_key = openai_api_key
+        response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides company information."},
@@ -179,8 +187,8 @@ def get_employee_count():
             function_call={"name": "get_employee_count"}
         )
         
-        function_call = response.choices[0].message.function_call
-        result = json.loads(function_call.arguments)
+        function_call = response['choices'][0]['message']['function_call']
+        result = json.loads(function_call['arguments'])
             
         response = make_response(jsonify({
             "company": company_name,
