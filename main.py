@@ -7,9 +7,28 @@ from openai import OpenAI
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/', methods=['GET'])
+@app.route('/')
 def index():
-    return "OK"
+    return jsonify({"status": "healthy"})
+
+@app.route('/api/countries', methods=['GET'])
+def get_countries():
+    # Return a list of Asian countries and Australia
+    countries = [
+        {"id": "sg", "name": "Singapore"},
+        {"id": "my", "name": "Malaysia"},
+        {"id": "id", "name": "Indonesia"},
+        {"id": "th", "name": "Thailand"},
+        {"id": "vn", "name": "Vietnam"},
+        {"id": "ph", "name": "Philippines"},
+        {"id": "jp", "name": "Japan"},
+        {"id": "kr", "name": "South Korea"},
+        {"id": "cn", "name": "China"},
+        {"id": "hk", "name": "Hong Kong"},
+        {"id": "tw", "name": "Taiwan"},
+        {"id": "au", "name": "Australia"}
+    ]
+    return jsonify(countries)
 
 @app.route('/employee_count', methods=['POST'])
 def get_employee_count():
