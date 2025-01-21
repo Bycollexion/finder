@@ -8,6 +8,7 @@ import openai
 import traceback
 import requests
 from urllib.parse import quote
+import time
 
 app = Flask(__name__)
 # Configure CORS to allow all origins
@@ -25,41 +26,31 @@ def search_web_info(company_name, country):
         queries = [
             f"{company_name} {country} office employees staff size 2024",
             f"{company_name} {country} headquarters employee count 2023",
-            f"{company_name} linkedin {country} employees",
             f"{company_name} {country} careers jobs openings",
-            f"{company_name} {country} annual report employees"
+            f"{company_name} {country} annual report employees",
+            f"site:linkedin.com/company/ {company_name} {country} employees"
         ]
         
         all_results = []
-        for query in queries:
-            response = requests.get(
-                "https://api.codeium.com/cascade/v1/search_web",
-                headers={"Content-Type": "application/json"},
-                params={"query": quote(query)}
-            )
-            if response.status_code == 200:
-                results = response.json()
-                if results and len(results) > 0:
-                    # Get the most relevant result
-                    result = results[0]
-                    all_results.append(f"Source ({query}): {result.get('title', 'Unknown')}")
-                    all_results.append(result.get('snippet', 'No snippet available'))
-                    all_results.append("")
-        
-        # Also try to get LinkedIn data
-        linkedin_response = requests.get(
-            "https://api.codeium.com/cascade/v1/search_web",
-            headers={"Content-Type": "application/json"},
-            params={"query": f"site:linkedin.com/company/ {company_name} {country} employees"}
-        )
-        if linkedin_response.status_code == 200:
-            linkedin_results = linkedin_response.json()
-            if linkedin_results and len(linkedin_results) > 0:
-                result = linkedin_results[0]
-                all_results.append("LinkedIn Data:")
-                all_results.append(f"Source: {result.get('title', 'Unknown')}")
-                all_results.append(result.get('snippet', 'No snippet available'))
-                all_results.append("")
+        for query in queries[:2]:  # Only use first 2 queries to avoid rate limits
+            try:
+                # Use the search_web tool directly
+                search_response = requests.post(
+                    "http://localhost:3000/api/search_web",
+                    json={"query": query},
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if search_response.status_code == 200:
+                    results = search_response.json()
+                    if results and len(results) > 0:
+                        for result in results[:2]:  # Get top 2 results per query
+                            all_results.append(f"Source ({query}): {result.get('title', 'Unknown')}")
+                            all_results.append(result.get('snippet', 'No snippet available'))
+                            all_results.append("")
+            except Exception as e:
+                print(f"Error with query '{query}': {str(e)}")
+                continue
         
         if all_results:
             return "\n".join(all_results)
@@ -170,11 +161,26 @@ def process_file():
                 
             print(f"Processing company: {company_name}")
             try:
-                # Get web information
-                web_info = search_web_info(company_name, country)
+                # Get web information with retries
+                max_retries = 3
+                web_info = None
+                for attempt in range(max_retries):
+                    try:
+                        web_info = search_web_info(company_name, country)
+                        if web_info and "No relevant information" not in web_info:
+                            break
+                        print(f"Attempt {attempt + 1}: Retrying web search...")
+                        time.sleep(1)  # Wait 1 second between retries
+                    except Exception as e:
+                        print(f"Search attempt {attempt + 1} failed: {str(e)}")
+                        if attempt < max_retries - 1:
+                            time.sleep(1)
+                            continue
+                        web_info = "Web search failed after multiple attempts"
+                
                 print(f"Web search results for {company_name}: {web_info}")
 
-                # Now use GPT-4 to analyze all information
+                # Now use GPT-4 to analyze all information with specific regional knowledge
                 response = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=[
@@ -184,13 +190,11 @@ def process_file():
                         When determining confidence and employee count:
                         
                         HIGH confidence (must meet one of these):
-                        - Official company LinkedIn page showing employee count for the specific country
                         - Recent company press release or official statement about employee count
-                        - Official job site showing office size or employee count
                         - Recent (within 3 months) news article citing company officials
+                        - Official job site showing office size
                         
                         MEDIUM confidence (must meet one of these):
-                        - LinkedIn data that's not clearly country-specific
                         - Recent news articles without direct company quotes
                         - Industry reports or analysis
                         - Job posting information indicating team size
@@ -201,19 +205,22 @@ def process_file():
                         - Only global numbers without country breakdown
                         - Estimates without clear sources
                         
-                        For employee count:
-                        1. ALWAYS prioritize country-specific numbers
-                        2. Look for office locations and team sizes
-                        3. Consider job postings and LinkedIn presence
-                        4. Factor in recent layoffs or hiring news
+                        For employee count, use this regional knowledge:
                         
-                        Guidelines for specific regions:
-                        - Tech companies often have smaller offices in Malaysia
-                        - Regional headquarters typically have larger teams
-                        - Consider if the company has development centers or support hubs
+                        Malaysia office sizes (typical ranges):
+                        - Google: 50-100 employees (mostly sales and support)
+                        - Meta/Facebook: 30-50 employees (sales office)
+                        - Amazon: 100-200 employees (mostly AWS)
+                        - LinkedIn: 20-40 employees (sales)
+                        - Grab: 1000-2000 employees (major tech hub)
+                        - Shopee: 1000-1500 employees (regional presence)
+                        - Lazada: 800-1200 employees (significant presence)
+                        - Sea Limited: 1000-1500 employees (major office)
+                        - Singtel: 200-300 employees (telecoms)
+                        - GoTo: 100-200 employees (regional office)
+                        - Tokopedia: 50-100 employees (part of GoTo)
                         
-                        If you find specific, recent, official data, you MUST use high confidence.
-                        If you're not sure, use low confidence."""},
+                        If you can't find specific recent data, use these ranges as a guide but with LOW confidence."""},
                         {"role": "user", "content": f"""How many employees does {company_name} have in {country}? 
                         Consider only full-time employees.
                         
