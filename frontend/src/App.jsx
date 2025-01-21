@@ -15,7 +15,8 @@ import {
 } from '@mui/material'
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL  // Backend API URL
+// Update API URL to use port 5001
+const API_URL = 'http://localhost:5001';
 
 function App() {
   const [file, setFile] = useState(null)
@@ -29,9 +30,9 @@ function App() {
   useEffect(() => {
     const fetchCountries = async () => {
       try {
-        console.log('API Base URL:', API_BASE_URL)
-        console.log('Fetching countries from:', `${API_BASE_URL}/api/countries`)
-        const response = await axios.get(`${API_BASE_URL}/api/countries`)
+        console.log('API Base URL:', API_URL)
+        console.log('Fetching countries from:', `${API_URL}/api/countries`)
+        const response = await axios.get(`${API_URL}/api/countries`)
         console.log('Countries response:', response.data)
         setCountries(response.data)
       } catch (error) {
@@ -91,9 +92,9 @@ function App() {
     formData.append('country', country)
 
     try {
-      console.log('API Base URL:', API_BASE_URL)
+      console.log('API Base URL:', API_URL)
       console.log('Submitting file:', file.name, 'for country:', country)
-      const response = await axios.post(`${API_BASE_URL}/api/process`, formData, {
+      const response = await axios.post(`${API_URL}/api/process`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
