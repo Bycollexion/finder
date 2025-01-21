@@ -19,24 +19,50 @@ CORS(app, resources={
     }
 })
 
-def search_web_info(query):
-    """Search the web using Codeium's search API"""
+def search_web_info(company_name, country):
+    """Search the web using multiple specific queries"""
     try:
-        response = requests.get(
+        queries = [
+            f"{company_name} {country} office employees staff size 2024",
+            f"{company_name} {country} headquarters employee count 2023",
+            f"{company_name} linkedin {country} employees",
+            f"{company_name} {country} careers jobs openings",
+            f"{company_name} {country} annual report employees"
+        ]
+        
+        all_results = []
+        for query in queries:
+            response = requests.get(
+                "https://api.codeium.com/cascade/v1/search_web",
+                headers={"Content-Type": "application/json"},
+                params={"query": quote(query)}
+            )
+            if response.status_code == 200:
+                results = response.json()
+                if results and len(results) > 0:
+                    # Get the most relevant result
+                    result = results[0]
+                    all_results.append(f"Source ({query}): {result.get('title', 'Unknown')}")
+                    all_results.append(result.get('snippet', 'No snippet available'))
+                    all_results.append("")
+        
+        # Also try to get LinkedIn data
+        linkedin_response = requests.get(
             "https://api.codeium.com/cascade/v1/search_web",
             headers={"Content-Type": "application/json"},
-            params={"query": quote(query)}
+            params={"query": f"site:linkedin.com/company/ {company_name} {country} employees"}
         )
-        if response.status_code == 200:
-            results = response.json()
-            if results and len(results) > 0:
-                # Format the results into a readable summary
-                summary = []
-                for result in results[:3]:  # Get top 3 results
-                    summary.append(f"Source: {result.get('title', 'Unknown')}")
-                    summary.append(result.get('snippet', 'No snippet available'))
-                    summary.append("")  # Empty line between results
-                return "\n".join(summary)
+        if linkedin_response.status_code == 200:
+            linkedin_results = linkedin_response.json()
+            if linkedin_results and len(linkedin_results) > 0:
+                result = linkedin_results[0]
+                all_results.append("LinkedIn Data:")
+                all_results.append(f"Source: {result.get('title', 'Unknown')}")
+                all_results.append(result.get('snippet', 'No snippet available'))
+                all_results.append("")
+        
+        if all_results:
+            return "\n".join(all_results)
         return "No relevant information found from web search."
     except Exception as e:
         print(f"Error during web search: {str(e)}")
@@ -144,9 +170,8 @@ def process_file():
                 
             print(f"Processing company: {company_name}")
             try:
-                # First, try to get information from web search
-                search_query = f"{company_name} number of employees {country} headquarters office location 2024 2023"
-                web_info = search_web_info(search_query)
+                # Get web information
+                web_info = search_web_info(company_name, country)
                 print(f"Web search results for {company_name}: {web_info}")
 
                 # Now use GPT-4 to analyze all information
@@ -155,30 +180,40 @@ def process_file():
                     messages=[
                         {"role": "system", "content": """You are a helpful assistant that provides company information. 
                         Analyze the web search results and your knowledge to provide accurate employee counts.
-                        Be conservative with confidence levels:
-                        - Use 'low' if the data might be outdated or if sources conflict
-                        - Use 'medium' if you have recent data but it's not from an official source
-                        - Use 'high' only if you have very recent, official data from company reports
                         
-                        When determining confidence:
-                        - HIGH: Recent (within 6 months) official company reports or regulatory filings
-                        - MEDIUM: Recent news articles, LinkedIn data, or market research
-                        - LOW: Older data, conflicting sources, or estimates
+                        When determining confidence and employee count:
                         
-                        For the employee count:
-                        1. Prioritize country-specific numbers when available
-                        2. If only regional numbers are available, estimate based on market presence
-                        3. If only global numbers are available, estimate based on market size
+                        HIGH confidence (must meet one of these):
+                        - Official company LinkedIn page showing employee count for the specific country
+                        - Recent company press release or official statement about employee count
+                        - Official job site showing office size or employee count
+                        - Recent (within 3 months) news article citing company officials
                         
-                        Include source citations in your reasoning.
+                        MEDIUM confidence (must meet one of these):
+                        - LinkedIn data that's not clearly country-specific
+                        - Recent news articles without direct company quotes
+                        - Industry reports or analysis
+                        - Job posting information indicating team size
                         
-                        IMPORTANT: If you cannot find specific information for the country, estimate based on:
-                        1. The company's market presence in that country
-                        2. The size of their operations there
-                        3. Recent news about expansion or reduction
-                        4. Comparison with similar companies in the region
+                        LOW confidence:
+                        - Outdated information
+                        - Conflicting sources
+                        - Only global numbers without country breakdown
+                        - Estimates without clear sources
                         
-                        Always provide a number, even if it's an estimate, but adjust the confidence level accordingly."""},
+                        For employee count:
+                        1. ALWAYS prioritize country-specific numbers
+                        2. Look for office locations and team sizes
+                        3. Consider job postings and LinkedIn presence
+                        4. Factor in recent layoffs or hiring news
+                        
+                        Guidelines for specific regions:
+                        - Tech companies often have smaller offices in Malaysia
+                        - Regional headquarters typically have larger teams
+                        - Consider if the company has development centers or support hubs
+                        
+                        If you find specific, recent, official data, you MUST use high confidence.
+                        If you're not sure, use low confidence."""},
                         {"role": "user", "content": f"""How many employees does {company_name} have in {country}? 
                         Consider only full-time employees.
                         
