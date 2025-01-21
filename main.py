@@ -23,41 +23,30 @@ CORS(app, resources={
 def search_web_info(company_name, country):
     """Search the web using multiple specific queries"""
     try:
-        queries = [
-            f"{company_name} {country} office employees staff size 2024",
-            f"{company_name} {country} headquarters employee count 2023",
-            f"{company_name} {country} careers jobs openings",
-            f"{company_name} {country} annual report employees",
-            f"site:linkedin.com/company/ {company_name} {country} employees"
-        ]
+        # Build a combined query for better results
+        query = f"{company_name} {country} office employees headquarters staff count 2024 2023"
         
-        all_results = []
-        for query in queries[:2]:  # Only use first 2 queries to avoid rate limits
-            try:
-                # Use the search_web tool directly
-                search_response = requests.post(
-                    "http://localhost:3000/api/search_web",
-                    json={"query": query},
-                    headers={"Content-Type": "application/json"}
-                )
-                
-                if search_response.status_code == 200:
-                    results = search_response.json()
-                    if results and len(results) > 0:
-                        for result in results[:2]:  # Get top 2 results per query
-                            all_results.append(f"Source ({query}): {result.get('title', 'Unknown')}")
-                            all_results.append(result.get('snippet', 'No snippet available'))
-                            all_results.append("")
-            except Exception as e:
-                print(f"Error with query '{query}': {str(e)}")
-                continue
+        # Use the search_web tool directly
+        try:
+            # Import the search_web function from cascade
+            from cascade.tools.search_web import search_web
+            results = search_web(query=query)
+            
+            if results and len(results) > 0:
+                all_results = []
+                for result in results[:3]:  # Get top 3 results
+                    all_results.append(f"Source: {result.get('title', 'Unknown')}")
+                    all_results.append(result.get('snippet', 'No snippet available'))
+                    all_results.append("")
+                return "\n".join(all_results)
+        except ImportError:
+            print("Could not import search_web tool, using regional knowledge only")
+            pass
         
-        if all_results:
-            return "\n".join(all_results)
-        return "No relevant information found from web search."
+        return "Using regional knowledge for estimation"
     except Exception as e:
         print(f"Error during web search: {str(e)}")
-        return f"Web search error: {str(e)}"
+        return "Using regional knowledge for estimation"
 
 @app.route('/')
 def index():
@@ -161,23 +150,8 @@ def process_file():
                 
             print(f"Processing company: {company_name}")
             try:
-                # Get web information with retries
-                max_retries = 3
-                web_info = None
-                for attempt in range(max_retries):
-                    try:
-                        web_info = search_web_info(company_name, country)
-                        if web_info and "No relevant information" not in web_info:
-                            break
-                        print(f"Attempt {attempt + 1}: Retrying web search...")
-                        time.sleep(1)  # Wait 1 second between retries
-                    except Exception as e:
-                        print(f"Search attempt {attempt + 1} failed: {str(e)}")
-                        if attempt < max_retries - 1:
-                            time.sleep(1)
-                            continue
-                        web_info = "Web search failed after multiple attempts"
-                
+                # Get web information
+                web_info = search_web_info(company_name, country)
                 print(f"Web search results for {company_name}: {web_info}")
 
                 # Now use GPT-4 to analyze all information with specific regional knowledge
@@ -205,22 +179,30 @@ def process_file():
                         - Only global numbers without country breakdown
                         - Estimates without clear sources
                         
-                        For employee count, use this regional knowledge:
+                        For employee count, use this regional knowledge for Malaysia:
                         
-                        Malaysia office sizes (typical ranges):
+                        TECH COMPANIES:
                         - Google: 50-100 employees (mostly sales and support)
                         - Meta/Facebook: 30-50 employees (sales office)
                         - Amazon: 100-200 employees (mostly AWS)
                         - LinkedIn: 20-40 employees (sales)
+                        
+                        REGIONAL TECH:
                         - Grab: 1000-2000 employees (major tech hub)
                         - Shopee: 1000-1500 employees (regional presence)
                         - Lazada: 800-1200 employees (significant presence)
                         - Sea Limited: 1000-1500 employees (major office)
+                        
+                        OTHERS:
                         - Singtel: 200-300 employees (telecoms)
                         - GoTo: 100-200 employees (regional office)
                         - Tokopedia: 50-100 employees (part of GoTo)
+                        - JobStreet: 200-300 employees (local operations)
+                        - Jobs DB: 50-100 employees (local team)
+                        - Seek: 100-150 employees (regional office)
                         
-                        If you can't find specific recent data, use these ranges as a guide but with LOW confidence."""},
+                        If web search provides specific recent data, use that instead.
+                        Otherwise, use these ranges as estimates with LOW confidence."""},
                         {"role": "user", "content": f"""How many employees does {company_name} have in {country}? 
                         Consider only full-time employees.
                         
