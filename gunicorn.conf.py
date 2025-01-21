@@ -1,15 +1,13 @@
 import multiprocessing
 
 # Server socket
-bind = "0.0.0.0:5001"
+bind = "127.0.0.1:5001"
 backlog = 2048
 
-# Worker processes
-workers = multiprocessing.cpu_count() * 2 + 1
+# Worker processes - using sync workers for simplicity
+workers = 4
 worker_class = 'sync'
-worker_connections = 1000
-timeout = 300
-keepalive = 2
+timeout = 120
 
 # Logging
 accesslog = '-'
@@ -22,14 +20,6 @@ proc_name = 'finder'
 # Server mechanics
 daemon = False
 pidfile = None
-umask = 0
-user = None
-group = None
-tmp_upload_dir = None
-
-# SSL
-keyfile = None
-certfile = None
 
 # Server hooks
 def on_starting(server):
