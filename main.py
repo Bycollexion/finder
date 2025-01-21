@@ -36,12 +36,14 @@ def get_countries():
 def process_file():
     try:
         if 'file' not in request.files:
+            print("Error: No file in request")
             return jsonify({"error": "No file provided"}), 400
             
         file = request.files['file']
         country = request.form.get('country')
         
         if not file or not country:
+            print(f"Error: Missing data - file: {bool(file)}, country: {bool(country)}")
             return jsonify({"error": "Both file and country are required"}), 400
             
         # Read the CSV file
@@ -58,15 +60,20 @@ def process_file():
         # Initialize OpenAI client
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if not openai_api_key:
+            print("Error: OpenAI API key not found in environment")
             return jsonify({"error": "OpenAI API key not configured"}), 500
+            
+        print(f"OpenAI API key found (length: {len(openai_api_key)})")
         client = OpenAI(api_key=openai_api_key)
         
         # Process each company
         for row in csv_reader:
             company_name = row.get('company', '').strip()
             if not company_name:
+                print(f"Skipping empty company name in row: {row}")
                 continue
                 
+            print(f"Processing company: {company_name}")
             try:
                 response = client.chat.completions.create(
                     model="gpt-4",
@@ -98,6 +105,7 @@ def process_file():
                 
                 function_call = response.choices[0].message.function_call
                 result = json.loads(function_call.arguments)
+                print(f"Got result for {company_name}: {result}")
                 
                 writer.writerow({
                     'company': company_name,
@@ -106,6 +114,7 @@ def process_file():
                     'source': 'openai'
                 })
             except Exception as e:
+                print(f"Error processing {company_name}: {str(e)}")
                 writer.writerow({
                     'company': company_name,
                     'employee_count': 0,
@@ -121,6 +130,7 @@ def process_file():
         return response
         
     except Exception as e:
+        print(f"Global error in process_file: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/employee_count', methods=['POST'])
