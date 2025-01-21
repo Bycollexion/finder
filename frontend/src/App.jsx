@@ -179,8 +179,8 @@ function App() {
                 onChange={(e) => setCountry(e.target.value)}
               >
                 {countries.map((country) => (
-                  <MenuItem key={country} value={country}>
-                    {country}
+                  <MenuItem key={country.id} value={country.id}>
+                    {country.name}
                   </MenuItem>
                 ))}
               </Select>
