@@ -1,7 +1,9 @@
-from flask import Flask, jsonify, request, make_response
+from flask import Flask, jsonify, request, make_response, send_file
 from flask_cors import CORS
 import os
 import json
+import csv
+from io import StringIO
 from openai import OpenAI
 
 app = Flask(__name__)
@@ -29,6 +31,97 @@ def get_countries():
         {"id": "au", "name": "Australia"}
     ]
     return jsonify(countries)
+
+@app.route('/api/process', methods=['POST'])
+def process_file():
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+            
+        file = request.files['file']
+        country = request.form.get('country')
+        
+        if not file or not country:
+            return jsonify({"error": "Both file and country are required"}), 400
+            
+        # Read the CSV file
+        content = file.read().decode('utf-8')
+        csv_input = StringIO(content)
+        csv_reader = csv.DictReader(csv_input)
+        
+        # Prepare output
+        output = StringIO()
+        fieldnames = ['company', 'employee_count', 'confidence', 'source']
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        # Initialize OpenAI client
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            return jsonify({"error": "OpenAI API key not configured"}), 500
+        client = OpenAI(api_key=openai_api_key)
+        
+        # Process each company
+        for row in csv_reader:
+            company_name = row.get('company', '').strip()
+            if not company_name:
+                continue
+                
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that provides company information."},
+                        {"role": "user", "content": f"How many employees does {company_name} have?"}
+                    ],
+                    functions=[{
+                        "name": "get_employee_count",
+                        "description": "Get the number of employees at a company",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "employee_count": {
+                                    "type": "integer",
+                                    "description": "The number of employees at the company"
+                                },
+                                "confidence": {
+                                    "type": "string",
+                                    "enum": ["high", "medium", "low"],
+                                    "description": "Confidence level in the employee count"
+                                }
+                            },
+                            "required": ["employee_count", "confidence"]
+                        }
+                    }],
+                    function_call={"name": "get_employee_count"}
+                )
+                
+                function_call = response.choices[0].message.function_call
+                result = json.loads(function_call.arguments)
+                
+                writer.writerow({
+                    'company': company_name,
+                    'employee_count': result['employee_count'],
+                    'confidence': result['confidence'],
+                    'source': 'openai'
+                })
+            except Exception as e:
+                writer.writerow({
+                    'company': company_name,
+                    'employee_count': 0,
+                    'confidence': 'low',
+                    'source': f'error: {str(e)}'
+                })
+        
+        # Prepare the response
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = 'attachment; filename=updated_companies.csv'
+        return response
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/employee_count', methods=['POST'])
 def get_employee_count():
