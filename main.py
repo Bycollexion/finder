@@ -1,31 +1,50 @@
 import os
+import sys
+import logging
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import json
-import httpx
 from openai import OpenAI
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
 @app.route("/")
 def health_check():
-    return jsonify({"status": "healthy"}), 200
+    logger.info("Health check endpoint called")
+    try:
+        return jsonify({"status": "healthy"}), 200
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/employee_count", methods=["POST"])
 def get_employee_count():
+    logger.info("Employee count endpoint called")
     try:
         data = request.get_json()
-        company_name = data.get("company")
+        logger.info(f"Received request data: {data}")
         
+        company_name = data.get("company")
         if not company_name:
+            logger.error("No company name provided")
             return jsonify({"error": "Company name is required"}), 400
 
         # Use OpenAI API
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if not openai_api_key:
+            logger.error("OpenAI API key not configured")
             return jsonify({"error": "OpenAI API key not configured"}), 500
             
+        logger.info(f"Making OpenAI API request for company: {company_name}")
         client = OpenAI(api_key=openai_api_key)
         
         # Use function calling to get structured data
@@ -57,9 +76,10 @@ def get_employee_count():
             function_call={"name": "get_employee_count"}
         )
         
-        # Extract the function call result
+        logger.info("Successfully received OpenAI API response")
         function_call = response.choices[0].message.function_call
         result = json.loads(function_call.arguments)
+        logger.info(f"Parsed result: {result}")
             
         return jsonify({
             "company": company_name,
@@ -69,8 +89,13 @@ def get_employee_count():
         })
 
     except Exception as e:
+        logger.error(f"Error processing request: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    try:
+        port = int(os.getenv("PORT", 8000))
+        logger.info(f"Starting server on port {port}")
+        app.run(host="0.0.0.0", port=port)
+    except Exception as e:
+        logger.error(f"Failed to start server: {str(e)}", exc_info=True)
