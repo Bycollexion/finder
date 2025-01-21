@@ -10,8 +10,11 @@ import requests
 from urllib.parse import quote
 import time
 from antml.tools import search_web
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app)
+
 # Configure CORS to allow all origins
 CORS(app, resources={
     r"/*": {
@@ -21,64 +24,75 @@ CORS(app, resources={
     }
 })
 
-def search_web_info(company_name, country):
-    """Search the web using multiple specific queries"""
+# Health check state
+health_status = {
+    "startup_time": time.time(),
+    "requests_processed": 0,
+    "last_error": None
+}
+
+def update_health_metrics(error=None):
+    """Update health check metrics"""
+    health_status["requests_processed"] += 1
+    if error:
+        health_status["last_error"] = {
+            "time": time.time(),
+            "error": str(error)
+        }
+
+@app.route('/health')
+def health_check():
+    """Detailed health check endpoint"""
+    uptime = time.time() - health_status["startup_time"]
+    
+    # Check OpenAI API
     try:
-        # Build queries to check multiple sources
-        queries = [
-            f"site:linkedin.com {company_name} {country} employees company size",
-            f"{company_name} {country} office employees staff size 2024 2023",
-            f"{company_name} {country} headquarters number of employees"
-        ]
-        
-        all_results = []
-        for query in queries:
-            try:
-                # Use the search_web tool directly
-                from antml.tools import search_web
-                results = search_web(query=query)
-                if results and len(results) > 0:
-                    for result in results[:2]:  # Get top 2 results per query
-                        title = result.get('title', '')
-                        snippet = result.get('snippet', '')
-                        # Only add if it contains employee-related information
-                        if any(term in (title + snippet).lower() for term in ['employees', 'staff', 'company size', 'team size', 'headcount']):
-                            all_results.append(f"Source: {title}")
-                            all_results.append(snippet)
-                            all_results.append("")
-            except Exception as e:
-                print(f"Error with query '{query}': {str(e)}")
-                continue
-        
-        if all_results:
-            return "\n".join(all_results)
-        return "Using regional knowledge for estimation"
+        openai_key = os.getenv("OPENAI_API_KEY")
+        openai_status = "healthy" if openai_key else "missing API key"
     except Exception as e:
-        print(f"Error during web search: {str(e)}")
-        return "Using regional knowledge for estimation"
+        openai_status = f"error: {str(e)}"
+    
+    status = {
+        "status": "healthy",
+        "uptime_seconds": uptime,
+        "requests_processed": health_status["requests_processed"],
+        "last_error": health_status["last_error"],
+        "dependencies": {
+            "openai": openai_status
+        }
+    }
+    
+    return jsonify(status)
 
 @app.route('/')
 def index():
+    """Basic health check endpoint"""
+    update_health_metrics()
     return jsonify({"status": "healthy"})
 
 @app.route('/api/countries', methods=['GET'])
 def get_countries():
-    # Return a list of Asian countries and Australia
-    countries = [
-        {"id": "sg", "name": "Singapore"},
-        {"id": "my", "name": "Malaysia"},
-        {"id": "id", "name": "Indonesia"},
-        {"id": "th", "name": "Thailand"},
-        {"id": "vn", "name": "Vietnam"},
-        {"id": "ph", "name": "Philippines"},
-        {"id": "jp", "name": "Japan"},
-        {"id": "kr", "name": "South Korea"},
-        {"id": "cn", "name": "China"},
-        {"id": "hk", "name": "Hong Kong"},
-        {"id": "tw", "name": "Taiwan"},
-        {"id": "au", "name": "Australia"}
-    ]
-    return jsonify(countries)
+    try:
+        update_health_metrics()
+        # Return a list of Asian countries and Australia
+        countries = [
+            {"id": "sg", "name": "Singapore"},
+            {"id": "my", "name": "Malaysia"},
+            {"id": "id", "name": "Indonesia"},
+            {"id": "th", "name": "Thailand"},
+            {"id": "vn", "name": "Vietnam"},
+            {"id": "ph", "name": "Philippines"},
+            {"id": "jp", "name": "Japan"},
+            {"id": "kr", "name": "South Korea"},
+            {"id": "cn", "name": "China"},
+            {"id": "hk", "name": "Hong Kong"},
+            {"id": "tw", "name": "Taiwan"},
+            {"id": "au", "name": "Australia"}
+        ]
+        return jsonify(countries)
+    except Exception as e:
+        update_health_metrics(error=e)
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
@@ -86,6 +100,7 @@ def process_file():
         return '', 204
         
     try:
+        update_health_metrics()
         print("=== Starting file processing ===")
         print(f"Request headers: {dict(request.headers)}")
         print(f"Request form data: {dict(request.form)}")
@@ -359,6 +374,7 @@ def process_file():
         return response
         
     except Exception as e:
+        update_health_metrics(error=e)
         print(f"Global error in process_file: {str(e)}")
         print(f"Traceback: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
@@ -366,6 +382,7 @@ def process_file():
 @app.route('/employee_count', methods=['POST'])
 def get_employee_count():
     try:
+        update_health_metrics()
         data = request.get_json()
         company_name = data.get('company')
         
@@ -422,6 +439,7 @@ def get_employee_count():
         return response
 
     except Exception as e:
+        update_health_metrics(error=e)
         response = make_response(jsonify({"error": str(e)}), 500)
         response.headers['Content-Type'] = 'application/json'
         return response
