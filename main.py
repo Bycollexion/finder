@@ -5,9 +5,17 @@ import json
 import csv
 from io import StringIO
 import openai
+import traceback
 
 app = Flask(__name__)
-CORS(app)
+# Configure CORS to allow all origins
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # Log environment variables on startup
 print("=== Environment Variables ===")
@@ -40,9 +48,17 @@ def get_countries():
     ]
     return jsonify(countries)
 
-@app.route('/api/process', methods=['POST'])
+@app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
+    if request.method == 'OPTIONS':
+        return '', 204
+        
     try:
+        print("=== Starting file processing ===")
+        print(f"Request headers: {dict(request.headers)}")
+        print(f"Request form data: {dict(request.form)}")
+        print(f"Request files: {dict(request.files)}")
+        
         if 'file' not in request.files:
             print("Error: No file in request")
             return jsonify({"error": "No file provided"}), 400
@@ -70,9 +86,13 @@ def process_file():
             return jsonify({"error": "No data found in CSV file"}), 400
             
         # Check if 'company' column exists
-        if 'company' not in reader.fieldnames:
+        if 'Company' in reader.fieldnames:  # Try both 'Company' and 'company'
+            company_column = 'Company'
+        elif 'company' in reader.fieldnames:
+            company_column = 'company'
+        else:
             print(f"Error: 'company' column not found. Available columns: {reader.fieldnames}")
-            return jsonify({"error": "CSV file must have a 'company' column"}), 400
+            return jsonify({"error": "CSV file must have a 'company' or 'Company' column"}), 400
             
         # Prepare output
         output = StringIO()
@@ -92,11 +112,7 @@ def process_file():
         # Process each company
         for row in all_rows:
             print(f"Processing row: {row}")
-            if 'company' not in row:
-                print(f"Error: 'company' column not found in row: {row}")
-                return jsonify({"error": "CSV file must have a 'company' column"}), 400
-                
-            company_name = row['company'].strip()
+            company_name = row[company_column].strip()
             if not company_name:
                 print(f"Skipping empty company name in row: {row}")
                 continue
@@ -147,6 +163,7 @@ def process_file():
                 
             except Exception as e:
                 print(f"Error processing {company_name}: {str(e)}")
+                print(f"Traceback: {traceback.format_exc()}")
                 writer.writerow({
                     'company': company_name,
                     'employee_count': 0,
@@ -168,6 +185,7 @@ def process_file():
         
     except Exception as e:
         print(f"Global error in process_file: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/employee_count', methods=['POST'])
@@ -235,4 +253,4 @@ def get_employee_count():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=True)
