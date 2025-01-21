@@ -94,6 +94,9 @@ function App() {
       console.log('API Base URL:', API_BASE_URL)
       console.log('Submitting file:', file.name, 'for country:', country)
       const response = await axios.post(`${API_BASE_URL}/api/process`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        },
         responseType: 'blob',
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
@@ -101,6 +104,13 @@ function App() {
           setProcessingStatus(`Uploading file: ${percentCompleted}%`)
         }
       })
+
+      if (response.headers['content-type'].includes('application/json')) {
+        // Handle error response
+        if (response.data.error) {
+          throw new Error(response.data.error);
+        }
+      }
 
       console.log('Process response:', response.data)
       setProcessingStatus('Processing complete! Downloading file...')
@@ -117,14 +127,25 @@ function App() {
       console.error('Error processing file:', error)
       if (error.response) {
         console.error('Response data:', error.response.data)
-        console.error('Response status:', error.response.status)
-        console.error('Response headers:', error.response.headers)
+        if (error.response.data instanceof Blob) {
+          // Try to read the blob as text to get the error message
+          const text = await error.response.data.text();
+          try {
+            const errorData = JSON.parse(text);
+            setError(errorData.error || 'Failed to process file. Please try again later.');
+          } catch (e) {
+            setError('Failed to process file. Please try again later.');
+          }
+        } else {
+          setError(error.response.data.error || 'Failed to process file. Please try again later.');
+        }
       } else if (error.request) {
         console.error('Request made but no response:', error.request)
+        setError('No response from server. Please try again later.');
       } else {
         console.error('Error setting up request:', error.message)
+        setError(error.message || 'Failed to process file. Please try again later.');
       }
-      setError('Failed to process file. Please try again later.')
     } finally {
       setLoading(false)
       setProgress(0)
