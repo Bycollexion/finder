@@ -7,6 +7,7 @@ from io import StringIO
 import openai
 import traceback
 import requests
+from urllib.parse import quote
 
 app = Flask(__name__)
 # Configure CORS to allow all origins
@@ -18,13 +19,28 @@ CORS(app, resources={
     }
 })
 
-# Log environment variables on startup
-print("=== Environment Variables ===")
-print(f"PORT: {os.environ.get('PORT', '(not set)')}")
-print(f"OPENAI_API_KEY set: {'yes' if os.environ.get('OPENAI_API_KEY') else 'no'}")
-if os.environ.get('OPENAI_API_KEY'):
-    print(f"OPENAI_API_KEY length: {len(os.environ.get('OPENAI_API_KEY'))}")
-print("=========================")
+def search_web_info(query):
+    """Search the web using Codeium's search API"""
+    try:
+        response = requests.get(
+            "https://api.codeium.com/cascade/v1/search_web",
+            headers={"Content-Type": "application/json"},
+            params={"query": quote(query)}
+        )
+        if response.status_code == 200:
+            results = response.json()
+            if results and len(results) > 0:
+                # Format the results into a readable summary
+                summary = []
+                for result in results[:3]:  # Get top 3 results
+                    summary.append(f"Source: {result.get('title', 'Unknown')}")
+                    summary.append(result.get('snippet', 'No snippet available'))
+                    summary.append("")  # Empty line between results
+                return "\n".join(summary)
+        return "No relevant information found from web search."
+    except Exception as e:
+        print(f"Error during web search: {str(e)}")
+        return f"Web search error: {str(e)}"
 
 @app.route('/')
 def index():
@@ -129,31 +145,9 @@ def process_file():
             print(f"Processing company: {company_name}")
             try:
                 # First, try to get information from web search
-                search_query = f"{company_name} number of employees {country} 2024"
-                web_info = ""
-                
-                try:
-                    # Search web for recent information
-                    search_response = requests.get(
-                        f"https://api.codeium.com/cascade/v1/search_web",
-                        params={"query": search_query},
-                        headers={"Content-Type": "application/json"}
-                    )
-                    
-                    if search_response.status_code == 200:
-                        search_results = search_response.json()
-                        # Combine search results into a summary
-                        web_info = "\n".join([
-                            f"Source {i+1}: {result['title']}\n{result['snippet']}\n"
-                            for i, result in enumerate(search_results[:3])
-                        ])
-                    else:
-                        web_info = "Web search failed to return results."
-                    
-                    print(f"Web search results for {company_name}: {web_info}")
-                except Exception as e:
-                    print(f"Error during web search for {company_name}: {str(e)}")
-                    web_info = "No web search results available."
+                search_query = f"{company_name} number of employees {country} headquarters office location 2024 2023"
+                web_info = search_web_info(search_query)
+                print(f"Web search results for {company_name}: {web_info}")
 
                 # Now use GPT-4 to analyze all information
                 response = openai.ChatCompletion.create(
@@ -176,7 +170,15 @@ def process_file():
                         2. If only regional numbers are available, estimate based on market presence
                         3. If only global numbers are available, estimate based on market size
                         
-                        Include source citations in your reasoning."""},
+                        Include source citations in your reasoning.
+                        
+                        IMPORTANT: If you cannot find specific information for the country, estimate based on:
+                        1. The company's market presence in that country
+                        2. The size of their operations there
+                        3. Recent news about expansion or reduction
+                        4. Comparison with similar companies in the region
+                        
+                        Always provide a number, even if it's an estimate, but adjust the confidence level accordingly."""},
                         {"role": "user", "content": f"""How many employees does {company_name} have in {country}? 
                         Consider only full-time employees.
                         
