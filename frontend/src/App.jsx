@@ -97,7 +97,6 @@ function App() {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
-        responseType: 'blob',
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
           setProgress(percentCompleted)
@@ -105,24 +104,28 @@ function App() {
         }
       })
 
-      if (response.headers['content-type'].includes('application/json')) {
+      if (response.headers['content-type']?.includes('application/json')) {
         // Handle error response
         if (response.data.error) {
           throw new Error(response.data.error);
         }
+      } else if (response.headers['content-type']?.includes('text/csv')) {
+        console.log('Received CSV response:', response.data)
+        setProcessingStatus('Processing complete! Downloading file...')
+        // Create download link
+        const blob = new Blob([response.data], { type: 'text/csv' })
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.setAttribute('download', 'updated_companies.csv')
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.URL.revokeObjectURL(url)
+        setProcessingStatus('Done! File has been downloaded.')
+      } else {
+        throw new Error('Unexpected response type from server')
       }
-
-      console.log('Process response:', response.data)
-      setProcessingStatus('Processing complete! Downloading file...')
-      // Create download link
-      const url = window.URL.createObjectURL(new Blob([response.data]))
-      const link = document.createElement('a')
-      link.href = url
-      link.setAttribute('download', 'updated_companies.csv')
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      setProcessingStatus('Done! File has been downloaded.')
     } catch (error) {
       console.error('Error processing file:', error)
       if (error.response) {
