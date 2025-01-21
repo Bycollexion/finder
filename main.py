@@ -243,13 +243,91 @@ def process_file():
                 
                 function_call = response['choices'][0]['message']['function_call']
                 result = json.loads(function_call['arguments'])
-                print(f"Got result for {company_name}: {result}")
+                print(f"Initial result for {company_name}: {result}")
                 
+                # Add sense-checking step
+                sense_check_response = openai.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": """You are a data validator checking employee counts for accuracy.
+                        
+                        VALIDATION RULES for Malaysia offices:
+                        
+                        1. Size Constraints:
+                        - No tech company sales office should have >200 employees unless it's a major tech hub
+                        - Regional HQs typically have 200-500 employees
+                        - Tech hubs (like Grab) can have >1000 employees
+                        
+                        2. Company-Specific Rules:
+                        TECH COMPANIES (Sales/Support Offices):
+                        - Google: 50-100 typical range
+                        - Meta/Facebook: 30-50 typical range
+                        - Amazon: 100-200 typical range (AWS)
+                        - LinkedIn: 20-40 typical range
+                        
+                        REGIONAL TECH:
+                        - Grab: 1000-2000 (major tech hub)
+                        - Shopee: 1000-1500 (major presence)
+                        - Lazada: 800-1200 (major presence)
+                        - Sea Limited: 1000-1500 (major office)
+                        
+                        JOB PORTALS:
+                        - JobStreet: 500-1000 (LinkedIn verified)
+                        - Jobs DB: 50-100
+                        - Seek: 100-150
+                        
+                        3. Red Flags:
+                        - Numbers too high for sales offices
+                        - Numbers too low for regional HQs
+                        - Extreme outliers from typical ranges
+                        
+                        If the number violates these rules, adjust it to the typical range and set confidence to LOW."""},
+                        {"role": "user", "content": f"""Please validate this employee count:
+                        Company: {company_name}
+                        Country: {country}
+                        Employee Count: {result['employee_count']}
+                        Confidence: {result['confidence']}
+                        
+                        Source Data:
+                        {web_info}
+                        
+                        Is this number reasonable? If not, what should it be?"""}
+                    ],
+                    functions=[{
+                        "name": "validate_employee_count",
+                        "description": "Validate and potentially adjust employee count",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "employee_count": {
+                                    "type": "integer",
+                                    "description": "The validated/adjusted employee count"
+                                },
+                                "confidence": {
+                                    "type": "string",
+                                    "enum": ["high", "medium", "low"],
+                                    "description": "Confidence level after validation"
+                                },
+                                "adjustment_reason": {
+                                    "type": "string",
+                                    "description": "Reason for any adjustment made"
+                                }
+                            },
+                            "required": ["employee_count", "confidence", "adjustment_reason"]
+                        }
+                    }],
+                    function_call={"name": "validate_employee_count"}
+                )
+                
+                validation_result = json.loads(sense_check_response['choices'][0]['message']['function_call']['arguments'])
+                print(f"Validation result for {company_name}: {validation_result}")
+                
+                # Use the validated result
                 writer.writerow({
                     'company': company_name,
-                    'employee_count': result['employee_count'],
-                    'confidence': result['confidence'],
-                    'source': 'openai'
+                    'employee_count': validation_result['employee_count'],
+                    'confidence': validation_result['confidence'],
+                    'source': f"openai ({validation_result['adjustment_reason']})"
                 })
                 
                 # Flush the output after each write
