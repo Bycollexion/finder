@@ -9,6 +9,7 @@ import traceback
 import requests
 from urllib.parse import quote
 import time
+from antml.tools import search_web
 
 app = Flask(__name__)
 # Configure CORS to allow all origins
@@ -33,6 +34,8 @@ def search_web_info(company_name, country):
         all_results = []
         for query in queries:
             try:
+                # Use the search_web tool directly
+                from antml.tools import search_web
                 results = search_web(query=query)
                 if results and len(results) > 0:
                     for result in results[:2]:  # Get top 2 results per query
