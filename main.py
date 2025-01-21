@@ -60,12 +60,19 @@ def process_file():
         csv_input = StringIO(content)
         
         # First, read all rows to ensure we have the data
-        all_rows = list(csv.DictReader(csv_input))
+        reader = csv.DictReader(csv_input)
+        print(f"CSV headers found: {reader.fieldnames}")
+        all_rows = list(reader)
         print(f"Number of rows read: {len(all_rows)}")
         
         if not all_rows:
             print("Error: No rows found in CSV")
             return jsonify({"error": "No data found in CSV file"}), 400
+            
+        # Check if 'company' column exists
+        if 'company' not in reader.fieldnames:
+            print(f"Error: 'company' column not found. Available columns: {reader.fieldnames}")
+            return jsonify({"error": "CSV file must have a 'company' column"}), 400
             
         # Prepare output
         output = StringIO()
