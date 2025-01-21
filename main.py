@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response
 from flask_cors import CORS
 import os
 import json
@@ -7,9 +7,11 @@ from openai import OpenAI
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/')
+@app.route('/', methods=['GET'])
 def index():
-    return jsonify({"status": "healthy"})
+    response = make_response(jsonify({"status": "healthy"}))
+    response.headers['Content-Type'] = 'application/json'
+    return response
 
 @app.route('/employee_count', methods=['POST'])
 def get_employee_count():
@@ -18,11 +20,15 @@ def get_employee_count():
         company_name = data.get('company')
         
         if not company_name:
-            return jsonify({"error": "Company name is required"}), 400
+            response = make_response(jsonify({"error": "Company name is required"}), 400)
+            response.headers['Content-Type'] = 'application/json'
+            return response
 
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if not openai_api_key:
-            return jsonify({"error": "OpenAI API key not configured"}), 500
+            response = make_response(jsonify({"error": "OpenAI API key not configured"}), 500)
+            response.headers['Content-Type'] = 'application/json'
+            return response
             
         client = OpenAI(api_key=openai_api_key)
         response = client.chat.completions.create(
@@ -56,15 +62,19 @@ def get_employee_count():
         function_call = response.choices[0].message.function_call
         result = json.loads(function_call.arguments)
             
-        return jsonify({
+        response = make_response(jsonify({
             "company": company_name,
             "employee_count": result["employee_count"],
             "confidence": result["confidence"],
             "source": "openai"
-        })
+        }))
+        response.headers['Content-Type'] = 'application/json'
+        return response
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        response = make_response(jsonify({"error": str(e)}), 500)
+        response.headers['Content-Type'] = 'application/json'
+        return response
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
