@@ -6,6 +6,7 @@ import csv
 from io import StringIO
 import openai
 import traceback
+import requests
 
 app = Flask(__name__)
 # Configure CORS to allow all origins
@@ -127,11 +128,60 @@ def process_file():
                 
             print(f"Processing company: {company_name}")
             try:
+                # First, try to get information from web search
+                search_query = f"{company_name} number of employees {country} 2024"
+                web_info = ""
+                
+                try:
+                    # Search web for recent information
+                    search_response = requests.get(
+                        f"https://api.codeium.com/cascade/v1/search_web",
+                        params={"query": search_query},
+                        headers={"Content-Type": "application/json"}
+                    )
+                    
+                    if search_response.status_code == 200:
+                        search_results = search_response.json()
+                        # Combine search results into a summary
+                        web_info = "\n".join([
+                            f"Source {i+1}: {result['title']}\n{result['snippet']}\n"
+                            for i, result in enumerate(search_results[:3])
+                        ])
+                    else:
+                        web_info = "Web search failed to return results."
+                    
+                    print(f"Web search results for {company_name}: {web_info}")
+                except Exception as e:
+                    print(f"Error during web search for {company_name}: {str(e)}")
+                    web_info = "No web search results available."
+
+                # Now use GPT-4 to analyze all information
                 response = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that provides company information. Be conservative with confidence levels - use 'low' if the data might be outdated, 'medium' if you're reasonably sure but the number might have changed, and 'high' only if you're extremely confident about the employee count. For companies in Asia, consider their rapid growth and potential for change when assigning confidence levels."},
-                        {"role": "user", "content": f"How many employees does {company_name} have in {country}? Consider only full-time employees."}
+                        {"role": "system", "content": """You are a helpful assistant that provides company information. 
+                        Analyze the web search results and your knowledge to provide accurate employee counts.
+                        Be conservative with confidence levels:
+                        - Use 'low' if the data might be outdated or if sources conflict
+                        - Use 'medium' if you have recent data but it's not from an official source
+                        - Use 'high' only if you have very recent, official data from company reports
+                        
+                        When determining confidence:
+                        - HIGH: Recent (within 6 months) official company reports or regulatory filings
+                        - MEDIUM: Recent news articles, LinkedIn data, or market research
+                        - LOW: Older data, conflicting sources, or estimates
+                        
+                        For the employee count:
+                        1. Prioritize country-specific numbers when available
+                        2. If only regional numbers are available, estimate based on market presence
+                        3. If only global numbers are available, estimate based on market size
+                        
+                        Include source citations in your reasoning."""},
+                        {"role": "user", "content": f"""How many employees does {company_name} have in {country}? 
+                        Consider only full-time employees.
+                        
+                        Web search results:
+                        {web_info}"""}
                     ],
                     functions=[{
                         "name": "get_employee_count",
@@ -141,12 +191,12 @@ def process_file():
                             "properties": {
                                 "employee_count": {
                                     "type": "integer",
-                                    "description": "The number of employees at the company"
+                                    "description": "The number of employees at the company in the specified country"
                                 },
                                 "confidence": {
                                     "type": "string",
                                     "enum": ["high", "medium", "low"],
-                                    "description": "Confidence level in the employee count: low (possibly outdated), medium (reasonably sure), high (very confident)"
+                                    "description": "Confidence level in the employee count: low (outdated/conflicting), medium (recent unofficial), high (recent official)"
                                 }
                             },
                             "required": ["employee_count", "confidence"]
