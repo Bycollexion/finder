@@ -56,8 +56,10 @@ def process_file():
             
         # Read the CSV file
         content = file.read().decode('utf-8')
+        print(f"CSV content: {content}")
         csv_input = StringIO(content)
         csv_reader = csv.DictReader(csv_input)
+        print(f"CSV headers: {csv_reader.fieldnames}")
         
         # Prepare output
         output = StringIO()
@@ -75,7 +77,10 @@ def process_file():
         openai.api_key = openai_api_key
         
         # Process each company
+        row_count = 0
         for row in csv_reader:
+            row_count += 1
+            print(f"Processing row {row_count}: {row}")
             company_name = row.get('company', '').strip()
             if not company_name:
                 print(f"Skipping empty company name in row: {row}")
