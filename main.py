@@ -65,5 +65,5 @@ def get_employee_count():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    port = int(os.getenv("PORT", 5000))
-    app.run(debug=os.getenv("DEBUG", False), host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
