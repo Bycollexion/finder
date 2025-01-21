@@ -86,8 +86,8 @@ def process_file():
                 response = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that provides company information."},
-                        {"role": "user", "content": f"How many employees does {company_name} have?"}
+                        {"role": "system", "content": "You are a helpful assistant that provides company information. Be conservative with confidence levels - use 'low' if the data might be outdated, 'medium' if you're reasonably sure but the number might have changed, and 'high' only if you're extremely confident about the employee count. For companies in Asia, consider their rapid growth and potential for change when assigning confidence levels."},
+                        {"role": "user", "content": f"How many employees does {company_name} have in {country}? Consider only full-time employees."}
                     ],
                     functions=[{
                         "name": "get_employee_count",
@@ -102,7 +102,7 @@ def process_file():
                                 "confidence": {
                                     "type": "string",
                                     "enum": ["high", "medium", "low"],
-                                    "description": "Confidence level in the employee count"
+                                    "description": "Confidence level in the employee count: low (possibly outdated), medium (reasonably sure), high (very confident)"
                                 }
                             },
                             "required": ["employee_count", "confidence"]
