@@ -58,9 +58,15 @@ def process_file():
         content = file.read().decode('utf-8')
         print(f"CSV content: {content}")
         csv_input = StringIO(content)
-        csv_reader = csv.DictReader(csv_input)
-        print(f"CSV headers: {csv_reader.fieldnames}")
         
+        # First, read all rows to ensure we have the data
+        all_rows = list(csv.DictReader(csv_input))
+        print(f"Number of rows read: {len(all_rows)}")
+        
+        if not all_rows:
+            print("Error: No rows found in CSV")
+            return jsonify({"error": "No data found in CSV file"}), 400
+            
         # Prepare output
         output = StringIO()
         fieldnames = ['company', 'employee_count', 'confidence', 'source']
@@ -77,11 +83,13 @@ def process_file():
         openai.api_key = openai_api_key
         
         # Process each company
-        row_count = 0
-        for row in csv_reader:
-            row_count += 1
-            print(f"Processing row {row_count}: {row}")
-            company_name = row.get('company', '').strip()
+        for row in all_rows:
+            print(f"Processing row: {row}")
+            if 'company' not in row:
+                print(f"Error: 'company' column not found in row: {row}")
+                return jsonify({"error": "CSV file must have a 'company' column"}), 400
+                
+            company_name = row['company'].strip()
             if not company_name:
                 print(f"Skipping empty company name in row: {row}")
                 continue
@@ -126,6 +134,10 @@ def process_file():
                     'confidence': result['confidence'],
                     'source': 'openai'
                 })
+                
+                # Flush the output after each write
+                output.flush()
+                
             except Exception as e:
                 print(f"Error processing {company_name}: {str(e)}")
                 writer.writerow({
@@ -134,10 +146,15 @@ def process_file():
                     'confidence': 'low',
                     'source': f'error: {str(e)}'
                 })
+                output.flush()
+        
+        # Get the final CSV content
+        output.seek(0)
+        final_content = output.getvalue()
+        print(f"Final CSV content: {final_content}")
         
         # Prepare the response
-        output.seek(0)
-        response = make_response(output.getvalue())
+        response = make_response(final_content)
         response.headers['Content-Type'] = 'text/csv'
         response.headers['Content-Disposition'] = 'attachment; filename=updated_companies.csv'
         return response
