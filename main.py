@@ -77,7 +77,10 @@ def process_file():
         
         # First, read all rows to ensure we have the data
         reader = csv.DictReader(csv_input)
-        print(f"CSV headers found: {reader.fieldnames}")
+        # Clean up header names by removing BOM and whitespace
+        cleaned_headers = [h.replace('\ufeff', '').strip().lower() for h in reader.fieldnames]
+        print(f"Original headers: {reader.fieldnames}")
+        print(f"Cleaned headers: {cleaned_headers}")
         all_rows = list(reader)
         print(f"Number of rows read: {len(all_rows)}")
         
@@ -85,14 +88,19 @@ def process_file():
             print("Error: No rows found in CSV")
             return jsonify({"error": "No data found in CSV file"}), 400
             
-        # Check if 'company' column exists
-        if 'Company' in reader.fieldnames:  # Try both 'Company' and 'company'
-            company_column = 'Company'
-        elif 'company' in reader.fieldnames:
-            company_column = 'company'
-        else:
-            print(f"Error: 'company' column not found. Available columns: {reader.fieldnames}")
-            return jsonify({"error": "CSV file must have a 'company' or 'Company' column"}), 400
+        # Check for various possible column names
+        possible_names = ['company', 'company name', 'companyname', 'name']
+        company_column = None
+        for header in reader.fieldnames:
+            cleaned_header = header.replace('\ufeff', '').strip().lower()
+            if cleaned_header in possible_names:
+                company_column = header
+                break
+                
+        if not company_column:
+            print(f"Error: No valid company column found. Available columns: {reader.fieldnames}")
+            print(f"Looking for any of these column names: {possible_names}")
+            return jsonify({"error": "CSV file must have a column named 'Company', 'Company Name', or similar"}), 400
             
         # Prepare output
         output = StringIO()
