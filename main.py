@@ -10,6 +10,9 @@ import requests
 from urllib.parse import quote
 import time
 from werkzeug.middleware.proxy_fix import ProxyFix
+import time
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+from openai.error import RateLimitError
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
@@ -90,6 +93,44 @@ def get_countries():
         return jsonify(countries)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+def handle_rate_limit(retry_state):
+    """Handle rate limit by waiting the suggested time"""
+    exception = retry_state.outcome.exception()
+    if hasattr(exception, 'headers'):
+        reset_time = int(exception.headers.get('x-ratelimit-reset-tokens', 1))
+        print(f"Rate limit reached. Waiting {reset_time} seconds...")
+        time.sleep(reset_time)
+    else:
+        # Default wait time if header not present
+        time.sleep(1)
+    return None
+
+@retry(
+    retry=retry_if_exception_type(RateLimitError),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    stop=stop_after_attempt(3),
+    after=handle_rate_limit
+)
+def call_openai_with_retry(messages, functions=None, function_call=None):
+    """Make OpenAI API call with retry logic"""
+    try:
+        kwargs = {
+            "model": "gpt-4",
+            "messages": messages,
+        }
+        if functions:
+            kwargs["functions"] = functions
+        if function_call:
+            kwargs["function_call"] = function_call
+            
+        return openai.ChatCompletion.create(**kwargs)
+    except RateLimitError as e:
+        print(f"Rate limit error: {str(e)}")
+        raise  # Re-raise for retry mechanism
+    except Exception as e:
+        print(f"Error calling OpenAI API: {str(e)}")
+        raise
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
@@ -175,8 +216,7 @@ def process_file():
                 print(f"Web search results for {company_name}: {web_info}")
 
                 # Now use GPT-4 to analyze all information with specific regional knowledge
-                response = openai.ChatCompletion.create(
-                    model="gpt-4",
+                response = call_openai_with_retry(
                     messages=[
                         {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
                         Analyze web search results and provide accurate employee counts based on the following guidelines:
@@ -264,8 +304,7 @@ def process_file():
                 print(f"Initial result for {company_name}: {result}")
                 
                 # Add sense-checking step
-                sense_check_response = openai.ChatCompletion.create(
-                    model="gpt-4",
+                sense_check_response = call_openai_with_retry(
                     messages=[
                         {"role": "system", "content": """You are a data validator checking employee counts for accuracy.
                         
@@ -396,8 +435,7 @@ def get_employee_count():
             return response
             
         openai.api_key = openai_api_key
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
+        response = call_openai_with_retry(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides company information."},
                 {"role": "user", "content": f"How many employees does {company_name} have?"}
