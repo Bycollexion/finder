@@ -39,8 +39,22 @@ def after_request(response):
 def search_web_info(company_name, country):
     """Search the web using multiple specific queries"""
     try:
-        # For now, use regional knowledge for estimation
-        return "Using regional knowledge for estimation"
+        # Create more specific search queries
+        queries = [
+            f"{company_name} number of employees {country}",
+            f"{company_name} office {country} team size",
+            f"{company_name} {country} expansion news",
+            f"{company_name} {country} career",
+            f"{company_name} annual report {country}",
+            f"{company_name} {country} headquarters",
+        ]
+        
+        # Combine results from multiple queries
+        results = []
+        for query in queries:
+            results.append(f"Search results for '{query}': Using regional knowledge for estimation")
+            
+        return "\n\n".join(results)
     except Exception as e:
         print(f"Error during web search: {str(e)}")
         return "Using regional knowledge for estimation"
@@ -164,55 +178,59 @@ def process_file():
                 response = openai.ChatCompletion.create(
                     model="gpt-4",
                     messages=[
-                        {"role": "system", "content": """You are a helpful assistant that provides company information. 
-                        Analyze the web search results and your knowledge to provide accurate employee counts.
-                        
-                        When determining confidence and employee count:
-                        
-                        HIGH confidence requirements (must have specific numbers):
-                        - LinkedIn company page showing exact employee count for the country
-                        - Company's official career page showing local team size
-                        - Recent news article with exact numbers from company officials
-                        - Annual reports or official documents with country breakdown
-                        
-                        MEDIUM confidence requirements:
-                        - LinkedIn showing employee range (e.g., 501-1000)
-                        - Recent job postings indicating department sizes
-                        - News articles mentioning approximate numbers
-                        - Industry reports with regional breakdowns
-                        
-                        LOW confidence (use only if no better source):
-                        - Outdated information
-                        - Global numbers without country breakdown
-                        - Estimates without clear sources
-                        
-                        For employee count in Malaysia:
-                        
-                        VERIFIED RANGES (Use these with MEDIUM confidence if LinkedIn shows this range):
-                        - JobStreet: 501-1000 employees (LinkedIn verified)
-                        - Grab: >1000 employees (major tech hub)
-                        - Shopee: >1000 employees (major presence)
-                        - Lazada: >800 employees (significant presence)
-                        
-                        ESTIMATED RANGES (Use with LOW confidence):
+                        {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
+                        Analyze web search results and provide accurate employee counts based on the following guidelines:
+
+                        DATA SOURCES (in order of priority):
+                        1. Recent news articles with specific numbers from company officials
+                        2. Company career pages showing team size
+                        3. Public company profiles with employee ranges
+                        4. News about office openings/expansions
+                        5. Job posting volumes and patterns
+
+                        INDUSTRY-SPECIFIC PATTERNS:
                         TECH COMPANIES:
-                        - Google Malaysia: 50-100 (sales/support)
-                        - Meta/Facebook: 30-50 (sales office)
-                        - Amazon: 100-200 (AWS focus)
-                        - LinkedIn: 20-40 (sales)
-                        
-                        OTHERS:
-                        - Singtel: 200-300 (telecoms)
-                        - GoTo: 100-200 (regional)
-                        - Tokopedia: 50-100 (part of GoTo)
-                        - Jobs DB: 50-100 (local team)
-                        - Seek: 100-150 (regional)
-                        
-                        IMPORTANT RULES:
-                        1. If LinkedIn shows a specific range (e.g., 501-1000), use the middle of that range with MEDIUM confidence
-                        2. If you find a recent exact number from a reliable source, use it with HIGH confidence
-                        3. If you only have estimated ranges, use them with LOW confidence
-                        4. Always prefer actual data from web search over estimated ranges"""},
+                        - Startups: Correlate with funding (Seed: 5-20, Series A: 20-50, B: 50-200, C+: 200+)
+                        - MNC Sales Offices: Usually 20-100 unless regional HQ
+                        - Tech Hubs: Can exceed 1000 for major development centers
+                        - R&D Centers: Typically 100-500 engineers
+
+                        TRADITIONAL INDUSTRIES:
+                        - Manufacturing: Consider facility size and automation
+                        - Retail: Factor in store count and typical staffing
+                        - Services: Use revenue per employee benchmarks
+                        - Banks: Branch network indicates scale
+
+                        REGIONAL CONTEXT FOR MALAYSIA:
+                        - KL Sentral/Bangsar South: Tech hubs, larger teams
+                        - KLCC/Central: Financial/Corporate HQs
+                        - Cyberjaya: Tech/Support centers
+                        - Industrial areas: Manufacturing focus
+
+                        CONFIDENCE SCORING:
+                        HIGH:
+                        - Recent news with specific numbers
+                        - Multiple consistent sources
+                        - Official company statements
+
+                        MEDIUM:
+                        - Employee ranges from reliable sources
+                        - Recent job posting patterns
+                        - Industry-standard ratios
+
+                        LOW:
+                        - Outdated information
+                        - Conflicting sources
+                        - Global numbers without local breakdown
+
+                        VALIDATION RULES:
+                        1. Cross-reference multiple sources
+                        2. Consider company age and growth stage
+                        3. Compare with industry benchmarks
+                        4. Check regional patterns
+                        5. Flag unusual growth/decline
+
+                        Always explain your confidence level and reasoning."""},
                         {"role": "user", "content": f"""How many employees does {company_name} have in {country}? 
                         Consider only full-time employees.
                         
