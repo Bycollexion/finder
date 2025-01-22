@@ -15,8 +15,8 @@ import {
 } from '@mui/material'
 import axios from 'axios'
 
-// Update API URL to use port 5001
-const API_URL = 'http://localhost:5001';
+// Update API URL to use server IP
+const API_URL = 'http://192.168.1.20:5001';
 
 function App() {
   const [file, setFile] = useState(null)
