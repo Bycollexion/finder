@@ -14,14 +14,24 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
 
-# Configure CORS to allow all origins
+# Configure CORS to be more permissive
 CORS(app, resources={
     r"/*": {
-        "origins": "*",
+        "origins": ["http://localhost:5173", "http://192.168.1.20:5173", "http://localhost:5001", "http://192.168.1.20:5001"],
         "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True,
+        "expose_headers": ["Content-Type", "Authorization"]
     }
 })
+
+@app.after_request
+def after_request(response):
+    """Add headers to every response"""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 def search_web_info(company_name, country):
     """Search the web using multiple specific queries"""
