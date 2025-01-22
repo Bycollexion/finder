@@ -11,16 +11,41 @@ import {
   Box,
   CircularProgress,
   Alert,
-  Snackbar
+  Snackbar,
+  LinearProgress
 } from '@mui/material'
 import axios from 'axios'
 
 // Update API URL to use server IP
-const API_URL = 'http://192.168.1.20:5001';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
-// Configure axios defaults
-axios.defaults.withCredentials = true;
-axios.defaults.headers.common['Content-Type'] = 'application/json';
+// Configure axios
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  },
+  withCredentials: true
+});
+
+// Add request interceptor for debugging
+api.interceptors.request.use(request => {
+  console.log('Starting Request:', request)
+  return request
+})
+
+// Add response interceptor for debugging
+api.interceptors.response.use(
+  response => {
+    console.log('Response:', response)
+    return response
+  },
+  error => {
+    console.error('Response Error:', error)
+    return Promise.reject(error)
+  }
+)
 
 function App() {
   const [file, setFile] = useState(null)
@@ -37,19 +62,25 @@ function App() {
       try {
         setLoading(true)
         setError(null)
-        console.log('API Base URL:', API_URL)
         console.log('Fetching countries from:', `${API_URL}/api/countries`)
-        const response = await axios.get(`${API_URL}/api/countries`, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          }
-        })
+        const response = await api.get('/api/countries')
         console.log('Countries response:', response.data)
-        setCountries(response.data)
+        if (Array.isArray(response.data)) {
+          setCountries(response.data)
+        } else {
+          throw new Error('Invalid response format')
+        }
       } catch (error) {
         console.error('Error fetching countries:', error)
-        setError('Failed to load countries. Please try again later. ' + (error.response?.data?.error || error.message))
+        let errorMessage = 'Failed to load countries. '
+        if (error.response) {
+          errorMessage += error.response.data?.error || error.response.statusText
+        } else if (error.request) {
+          errorMessage += 'Network error'
+        } else {
+          errorMessage += error.message
+        }
+        setError(errorMessage)
       } finally {
         setLoading(false)
       }
@@ -101,13 +132,11 @@ function App() {
     try {
       setLoading(true)
       setError(null)
-      console.log('API Base URL:', API_URL)
       console.log('Submitting file:', file.name, 'for country:', country)
-      const response = await axios.post(`${API_URL}/api/process`, formData, {
+      const response = await api.post('/api/process', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
-        withCredentials: true,
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
           setProgress(percentCompleted)
@@ -140,7 +169,15 @@ function App() {
       }
     } catch (error) {
       console.error('Error processing file:', error)
-      setError('Failed to process file. ' + (error.response?.data?.error || error.message))
+      let errorMessage = 'Failed to process file. '
+      if (error.response) {
+        errorMessage += error.response.data?.error || error.response.statusText
+      } else if (error.request) {
+        errorMessage += 'Network error'
+      } else {
+        errorMessage += error.message
+      }
+      setError(errorMessage)
     } finally {
       setLoading(false)
       setProgress(0)
