@@ -17,6 +17,8 @@ import traceback
 import googlesearch
 import json
 from googlesearch import search as google_search
+import time
+from functools import lru_cache
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -42,29 +44,44 @@ def clean_count(text):
         return numbers[0].replace(',', '')
     return None
 
-def perform_web_search(query):
-    """Perform web search and return results"""
+# Cache for search results
+search_cache = {}
+last_search_time = 0
+MIN_SEARCH_DELAY = 2  # Minimum seconds between searches
+
+@lru_cache(maxsize=100)
+def cached_web_search(query):
+    """Cached version of web search to avoid repeated calls"""
+    global last_search_time
+    
+    # Rate limiting
+    current_time = time.time()
+    time_since_last = current_time - last_search_time
+    if time_since_last < MIN_SEARCH_DELAY:
+        time.sleep(MIN_SEARCH_DELAY - time_since_last)
+    
     try:
         results = []
-        # Use google_search directly, which returns URLs as strings
         search_results = google_search(query, num_results=5, lang="en")
         for url in search_results:
             if isinstance(url, str):
                 results.append({"url": url})
         logger.debug(f"Search for '{query}' found {len(results)} results")
+        last_search_time = time.time()
         return results
     except Exception as e:
         logger.error(f"Error in web search: {str(e)}")
         return []
 
-def get_web_content(url):
-    """Safely get content from a URL"""
+@lru_cache(maxsize=100)
+def cached_web_content(url):
+    """Cached version of web content fetching"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()  # Raise an error for bad status codes
+        response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -97,84 +114,52 @@ def search_web_info(company, country):
             "hiring_data": []
         }
         
-        # 1. Direct employee count searches
-        count_queries = [
-            f"{company} {country} office employees",
-            f"{company} {country} office size",
-            f"{company} {country} staff count"
+        # Combine queries to reduce number of searches
+        search_queries = [
+            # Primary search with multiple terms
+            f"{company} {country} office employees size staff count",
+            # LinkedIn specific search
+            f"site:linkedin.com {company} {country} employees office",
+            # News and hiring combined
+            f"{company} {country} office expansion hiring jobs news"
         ]
         
-        for query in count_queries:
-            results = perform_web_search(query)
+        for query in search_queries:
+            results = cached_web_search(query)
             for result in results:
-                content = get_web_content(result['url'])
-                if content and company.lower() in content.lower() and country.lower() in content.lower():
+                content = cached_web_content(result['url'])
+                if not content or company.lower() not in content.lower() or country.lower() not in content.lower():
+                    continue
+                    
+                # Categorize the result
+                if "linkedin.com" in result['url'].lower():
+                    all_data["linkedin_data"].append({
+                        "source": result['url'],
+                        "content": content
+                    })
+                elif "job" in result['url'].lower() or "career" in result['url'].lower():
+                    all_data["hiring_data"].append({
+                        "source": result['url'],
+                        "content": content
+                    })
+                elif "news" in result['url'].lower():
+                    all_data["news_data"].append({
+                        "source": result['url'],
+                        "content": content
+                    })
+                else:
                     all_data["employee_counts"].append({
                         "source": result['url'],
                         "content": content
                     })
-
-        # 2. LinkedIn data
-        linkedin_queries = [
-            f"site:linkedin.com {company} {country} employees",
-            f"site:linkedin.com {company} {country} office"
-        ]
-        
-        for query in linkedin_queries:
-            results = perform_web_search(query)
-            for result in results:
-                if "linkedin.com" in result['url'].lower():
-                    content = get_web_content(result['url'])
-                    if content:
-                        all_data["linkedin_data"].append({
-                            "source": result['url'],
-                            "content": content
-                        })
-
-        # 3. News and hiring data
-        news_queries = [
-            f"{company} {country} office expansion news",
-            f"{company} {country} hiring 2024",
-            f"{company} {country} jobs"
-        ]
-        
-        for query in news_queries:
-            results = perform_web_search(query)
-            for result in results:
-                content = get_web_content(result['url'])
-                if content:
-                    if "job" in result['url'].lower() or "career" in result['url'].lower():
-                        all_data["hiring_data"].append({
-                            "source": result['url'],
-                            "content": content
-                        })
-                    else:
-                        all_data["news_data"].append({
-                            "source": result['url'],
-                            "content": content
-                        })
         
         # Format data for OpenAI
         formatted_text = ""
-        if all_data["employee_counts"]:
-            formatted_text += "\nDirect Employee Count Sources:\n"
-            for item in all_data["employee_counts"]:
-                formatted_text += f"Source: {item['source']}\n{item['content']}\n"
-        
-        if all_data["linkedin_data"]:
-            formatted_text += "\nLinkedIn Data:\n"
-            for item in all_data["linkedin_data"]:
-                formatted_text += f"Source: {item['source']}\n{item['content']}\n"
-        
-        if all_data["news_data"]:
-            formatted_text += "\nNews Data:\n"
-            for item in all_data["news_data"]:
-                formatted_text += f"Source: {item['source']}\n{item['content']}\n"
-        
-        if all_data["hiring_data"]:
-            formatted_text += "\nHiring Data:\n"
-            for item in all_data["hiring_data"]:
-                formatted_text += f"Source: {item['source']}\n{item['content']}\n"
+        for category, items in all_data.items():
+            if items:
+                formatted_text += f"\n{category.replace('_', ' ').title()}:\n"
+                for item in items:
+                    formatted_text += f"Source: {item['source']}\n{item['content']}\n"
         
         logger.debug(f"Found data for {company}:")
         for category, items in all_data.items():
