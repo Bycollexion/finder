@@ -148,232 +148,177 @@ def search_web_info(company_name, country):
         return "Error occurred during search. Using regional knowledge for estimation."
 
 def review_employee_count(company, country, initial_result, web_info):
-    """Have GPT-4 review the initial employee count estimate"""
+    """Review and validate employee count based on company type and country patterns"""
     try:
-        response = call_openai_with_retry(
-            messages=[
-                {"role": "system", "content": f"""You are a senior data analyst reviewing employee count estimates.
-                Your job is to validate and potentially adjust estimates based on the following criteria:
+        # Prepare company name variations for better matching
+        company_variations = [
+            company.lower(),
+            company.lower().replace(" ", ""),
+            company.lower().replace(".", "")
+        ]
+        
+        # Detect company type
+        mnc_companies = ["google", "meta", "facebook", "amazon", "microsoft", "apple"]
+        regional_tech = ["grab", "shopee", "lazada", "sea", "gojek", "tokopedia", "goto"]
+        
+        company_type = "local"
+        if any(name in company_variations for name in mnc_companies):
+            company_type = "mnc"
+        elif any(name in company_variations for name in regional_tech):
+            company_type = "regional"
 
-                VALIDATION CHECKLIST:
-                1. Check if the estimate matches known patterns for {country}:
-                   
-                   TECH MNC OFFICE SIZES BY COUNTRY:
-                   Singapore:
-                   * Regional HQ: 1000-5000+ employees
-                   * Tech Hub: 500-2000 employees
-                   * Sales/Support: 100-500 employees
-
-                   Malaysia:
-                   * Regional HQ: 500+ employees
-                   * Development Center: 200-500 employees
-                   * Regional Office: 50-200 employees
-                   * Sales/Support: 10-50 employees
-
-                   Indonesia:
-                   * Country HQ: 500-2000 employees
-                   * Tech Center: 200-1000 employees
-                   * Regional: 100-500 employees
-                   * Sales: 50-200 employees
-
-                   Vietnam:
-                   * Tech Hub: 500-2000 employees
-                   * Dev Center: 200-1000 employees
-                   * Sales: 50-200 employees
-
-                   Thailand:
-                   * Country HQ: 200-1000 employees
-                   * Tech/Support: 100-500 employees
-                   * Sales: 50-200 employees
-
-                   Philippines:
-                   * Support Hub: 500-2000 employees
-                   * Tech Center: 200-1000 employees
-                   * Sales: 50-200 employees
-
-                   Japan:
-                   * Country HQ: 1000-5000+ employees
-                   * Tech Center: 500-2000 employees
-                   * Regional: 200-1000 employees
-
-                   South Korea:
-                   * Country HQ: 1000-5000+ employees
-                   * R&D Center: 500-2000 employees
-                   * Sales: 100-500 employees
-
-                   China:
-                   * Country HQ: 2000-10000+ employees
-                   * R&D Centers: 1000-5000 employees
-                   * Regional: 500-2000 employees
-                   * City Office: 100-500 employees
-
-                   Hong Kong:
-                   * Regional HQ: 500-2000 employees
-                   * Financial: 200-1000 employees
-                   * Sales: 100-500 employees
-
-                   Taiwan:
-                   * R&D Center: 500-2000 employees
-                   * Country HQ: 200-1000 employees
-                   * Sales: 100-500 employees
-
-                   Australia:
-                   * Country HQ: 1000-5000+ employees
-                   * Tech Hub: 500-2000 employees
-                   * Regional: 200-1000 employees
-                   * Sales: 100-500 employees
-
-                   TECH STARTUP SIZES BY FUNDING (All Countries):
-                   * Seed: 5-20 employees
-                   * Series A: 20-50 employees
-                   * Series B: 50-200 employees
-                   * Series C+: 200-1000+ employees
-
-                   TRADITIONAL INDUSTRIES BY COUNTRY TIER:
-                   Tier 1 (SG, JP, KR, AU):
-                   * Manufacturing: 200-2000+ per facility
-                   * Retail: 20-100 per location
-                   * Services: 50-200 per office
-                   * Banks: 100-500 per major branch
-
-                   Tier 2 (HK, TW, MY):
-                   * Manufacturing: 100-1000 per facility
-                   * Retail: 10-50 per location
-                   * Services: 20-100 per office
-                   * Banks: 50-200 per major branch
-
-                   Tier 3 (ID, TH, VN, PH):
-                   * Manufacturing: 200-2000+ per facility (labor intensive)
-                   * Retail: 5-30 per location
-                   * Services: 10-50 per office
-                   * Banks: 20-100 per major branch
-
-                   China (Special Case):
-                   * Manufacturing: 500-5000+ per facility
-                   * Retail: 10-50 per location
-                   * Services: 50-200 per office
-                   * Banks: 100-500 per major branch
-                   
-                2. Common Red Flags:
-                   - Numbers too high for market size
-                   - Global numbers instead of local office
-                   - Outdated or pre-pandemic numbers
-                   - Inconsistent with office location/type
-                
-                3. Location-Based Validation:
-                   SINGAPORE:
-                   - CBD/Marina Bay: Finance/Tech HQs (500-2000)
-                   - One-North: R&D/Tech (200-1000)
-                   - Changi: Support Centers (100-500)
-
-                   MALAYSIA:
-                   - KL Sentral/Bangsar South: Tech (50-200)
-                   - KLCC/Central: Corporate (100-300)
-                   - Cyberjaya: Support/Dev (200-500)
-
-                   INDONESIA:
-                   - Jakarta CBD: Corporate (200-1000)
-                   - BSD City: Tech Hub (100-500)
-                   - Industrial: Manufacturing (500-2000)
-
-                   VIETNAM:
-                   - HCMC D1/D2: Corporate (100-500)
-                   - Hanoi West: Tech Hub (200-1000)
-                   - Industrial Parks: Manufacturing (1000-5000)
-
-                   THAILAND:
-                   - Sukhumvit: Corporate (100-500)
-                   - Sathorn: Finance (200-1000)
-                   - Eastern Seaboard: Manufacturing (500-2000)
-
-                   PHILIPPINES:
-                   - BGC/Makati: Corporate (200-1000)
-                   - Cebu IT Park: Support (500-2000)
-                   - Clark/Subic: Manufacturing (1000-5000)
-
-                4. Industry-Specific Checks:
-                   - Tech: Compare with similar tech companies in same city
-                   - Manufacturing: Check against facility size and automation level
-                   - Services: Validate against market share and city tier
-                   - Retail: Cross-check with store count and country tier
-
-                If you find issues:
-                1. Adjust the number to a more realistic range for the specific country
-                2. Update the confidence level if needed
-                3. Add your reasoning to the explanation
-                4. Add "REVIEWED" to the sources list
-
-                If the estimate looks correct:
-                1. Confirm the number
-                2. Add validation notes
-                3. Add "VALIDATED" to the sources list"""},
-                {"role": "user", "content": f"""Review this employee count estimate for {company} in {country}:
-
-Initial Estimate:
-- Count: {initial_result.get('employee_count')}
-- Confidence: {initial_result.get('confidence')}
-- Sources: {initial_result.get('sources')}
-- Explanation: {initial_result.get('explanation')}
-
-Available Information:
-{web_info}
-
-Is this estimate realistic for {country}? Should it be adjusted based on the country-specific patterns?"""}
-            ],
-            functions=[{
-                "name": "review_estimate",
-                "description": "Review and potentially adjust the employee count estimate",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "employee_count": {
-                            "type": "integer",
-                            "description": "The validated or adjusted employee count"
-                        },
-                        "confidence": {
-                            "type": "string",
-                            "enum": ["HIGH", "MEDIUM", "LOW"],
-                            "description": "Updated confidence level in the count"
-                        },
-                        "sources": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Updated list of sources, including review status"
-                        },
-                        "explanation": {
-                            "type": "string",
-                            "description": "Updated explanation including review notes"
-                        },
-                        "was_adjusted": {
-                            "type": "boolean",
-                            "description": "Whether the estimate was adjusted during review"
-                        }
+        # Country-specific office patterns
+        country_patterns = {
+            "malaysia": {
+                "mnc": {
+                    "ranges": {
+                        "small": (100, 500),    # Sales/Support offices
+                        "medium": (500, 1000),  # Regional offices
+                        "large": (1000, 2000)   # Major development centers
                     },
-                    "required": ["employee_count", "confidence", "sources", "explanation", "was_adjusted"]
+                    "locations": {
+                        "klcc": "medium",
+                        "bangsar": "medium",
+                        "cyberjaya": "large",
+                        "penang": "medium"
+                    }
+                },
+                "regional": {
+                    "ranges": {
+                        "small": (500, 1000),   # Market entry
+                        "medium": (1000, 2000), # Established
+                        "large": (2000, 5000)   # Major market
+                    }
+                },
+                "local": {
+                    "ranges": {
+                        "small": (50, 200),
+                        "medium": (200, 1000),
+                        "large": (1000, 3000)
+                    }
                 }
-            }],
-            function_call={"name": "review_estimate"}
-        )
+            },
+            # Add patterns for other countries...
+        }
+
+        # Get initial count
+        count = initial_result.get('employee_count')
+        confidence = initial_result.get('confidence', 'LOW')
+        sources = initial_result.get('sources', [])
+        explanation = initial_result.get('explanation', '')
+
+        # Skip validation if no count
+        if not count:
+            return initial_result
+
+        # Get patterns for this company type and country
+        country_info = country_patterns.get(country.lower(), {})
+        company_patterns = country_info.get(company_type, {})
         
-        if response.choices[0].message.get("function_call"):
-            return json.loads(response.choices[0].message["function_call"]["arguments"])
-        return initial_result
+        # Validate against patterns
+        ranges = company_patterns.get('ranges', {})
+        is_valid = False
+        size_category = None
         
+        for category, (min_val, max_val) in ranges.items():
+            if min_val <= count <= max_val:
+                is_valid = True
+                size_category = category
+                break
+
+        # Check for outliers
+        if not is_valid:
+            closest_range = min(ranges.items(), key=lambda x: min(
+                abs(count - x[1][0]),  # Distance from min
+                abs(count - x[1][1])   # Distance from max
+            ))
+            
+            # Adjust if significantly off
+            if count < closest_range[1][0] * 0.5 or count > closest_range[1][1] * 1.5:
+                # Get the midpoint of the closest range
+                adjusted_count = sum(closest_range[1]) // 2
+                explanation += f"\nAdjusted from {count} to {adjusted_count} based on {country} {company_type} company patterns."
+                count = adjusted_count
+                confidence = 'LOW'  # Lower confidence due to adjustment
+                sources.append("ADJUSTED")
+
+        # Location-based validation for MNCs
+        if company_type == "mnc":
+            locations = company_patterns.get('locations', {})
+            for location, expected_size in locations.items():
+                if location in web_info.lower():
+                    expected_range = ranges.get(expected_size, (0, 0))
+                    if count < expected_range[0] * 0.5 or count > expected_range[1] * 1.5:
+                        adjusted_count = sum(expected_range) // 2
+                        explanation += f"\nAdjusted to {adjusted_count} based on {location} office patterns."
+                        count = adjusted_count
+                        confidence = 'MEDIUM'  # Location-based adjustment is more reliable
+                        sources.append(f"LOCATION_{location.upper()}")
+
+        # Additional validation for regional tech companies
+        if company_type == "regional":
+            # Check if it's their home market
+            home_markets = {
+                "grab": "singapore",
+                "shopee": "singapore",
+                "lazada": "singapore",
+                "sea": "singapore",
+                "gojek": "indonesia",
+                "tokopedia": "indonesia",
+                "goto": "indonesia"
+            }
+            
+            company_lower = next((name for name in company_variations if name in home_markets), None)
+            if company_lower:
+                is_home_market = home_markets[company_lower] == country.lower()
+                if is_home_market and count < ranges['large'][0]:
+                    adjusted_count = sum(ranges['large']) // 2
+                    explanation += f"\nAdjusted up to {adjusted_count} as {country} is the home market."
+                    count = adjusted_count
+                    confidence = 'MEDIUM'
+                    sources.append("HOME_MARKET")
+                elif not is_home_market and count > ranges['medium'][1]:
+                    adjusted_count = sum(ranges['medium']) // 2
+                    explanation += f"\nAdjusted down to {adjusted_count} as {country} is not the home market."
+                    count = adjusted_count
+                    confidence = 'MEDIUM'
+                    sources.append("FOREIGN_MARKET")
+
+        return {
+            "employee_count": count,
+            "confidence": confidence,
+            "sources": sources,
+            "explanation": explanation.strip(),
+            "was_adjusted": "ADJUSTED" in sources or "LOCATION" in str(sources) or "MARKET" in str(sources)
+        }
+
     except Exception as e:
-        print(f"Error during review: {str(e)}")
+        print(f"Error in review: {str(e)}")
         return initial_result
 
 def validate_employee_count(count):
     """Validate and clean employee count value"""
-    if isinstance(count, int):
-        return count
+    if count is None:
+        return None
+        
+    if isinstance(count, (int, float)):
+        return int(count)
+        
     if isinstance(count, str):
-        # Remove any non-numeric characters
-        cleaned = ''.join(c for c in count if c.isdigit())
+        # Remove any non-numeric characters except decimal point
+        cleaned = ''.join(c for c in count if c.isdigit() or c == '.')
         if cleaned:
             try:
-                return int(cleaned)
-            except ValueError:
+                # First try converting to float (in case it has decimals)
+                float_val = float(cleaned)
+                # Then convert to int
+                return int(float_val)
+            except (ValueError, TypeError):
+                # If that fails, try just getting the first sequence of numbers
+                import re
+                numbers = re.findall(r'\d+', count)
+                if numbers:
+                    return int(numbers[0])
                 return None
     return None
 
