@@ -213,199 +213,71 @@ def validate_employee_count(count):
                 return None
     return None
 
-def process_company_batch(companies, country, batch_id):
+def process_company_batch(companies, country, progress_key=None):
     """Process a batch of companies"""
     results = []
-    quota_exceeded = False
+    total = len(companies)
     
-    for company in companies:
+    for i, company in enumerate(companies):
         try:
-            if quota_exceeded:
+            print(f"Processing company {i+1}/{total}: {company}")
+            
+            # Update progress if we have a key
+            if progress_key and using_redis:
+                try:
+                    redis_client.hset(progress_key, 'current', i+1)
+                except:
+                    pass  # Ignore Redis errors
+                    
+            # Skip empty company names
+            if not company or not company.strip():
                 results.append({
-                    "company": company,
-                    "error": "API quota exceeded. Please try again later.",
-                    "status": "quota_exceeded"
+                    'company': company,
+                    'status': 'error',
+                    'error': 'Empty company name'
                 })
                 continue
 
-            web_info = search_web_info(company, country)
-            if isinstance(web_info, dict) and web_info.get("error") == "quota_exceeded":
-                quota_exceeded = True
+            # Try to get cached result first
+            cache_key = f"company:{company}:{country}"
+            if using_redis:
+                try:
+                    cached = redis_client.get(cache_key)
+                    if cached:
+                        results.append(json.loads(cached))
+                        print(f"Cache hit for {company}")
+                        continue
+                except:
+                    pass  # Ignore Redis errors
+
+            # Get company info
+            info = search_web_info(company, country)
+            
+            if not info:
                 results.append({
-                    "company": company,
-                    "error": "API quota exceeded. Please try again later.",
-                    "status": "quota_exceeded"
+                    'company': company,
+                    'status': 'error',
+                    'error': 'No information found'
                 })
                 continue
-            
-            # Initial estimate using GPT-4
-            try:
-                response = call_openai_with_retry(
-                    messages=[
-                        {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
-                        Your task is to determine EXACT employee counts for specific country offices. DO NOT provide ranges.
-                        
-                        ANALYSIS PRIORITIES:
-                        1. LinkedIn Data (Primary Source):
-                           - Use exact employee counts from LinkedIn
-                           - Count employees who list the company and country
-                           - Use job posting volume as a supporting indicator
-                        
-                        2. Official Sources (Secondary Source):
-                           - Company career pages with exact team size
-                           - Job postings with office size information
-                           - Glassdoor/Indeed company information
-                        
-                        3. Office Information (Supporting Data):
-                           - Exact office capacity numbers
-                           - Specific floor space and employee density
-                           - Precise office location data
-                        
-                        ESTIMATION RULES:
-                        1. For All Companies:
-                           - Focus ONLY on the specific country office
-                           - Use ONLY current, verifiable data
-                           - Count only full-time employees
-                           - Exclude contractors unless specifically mentioned
-                        
-                        2. Data Priority:
-                           - LinkedIn employee count is primary source
-                           - Company career page data is secondary
-                           - Job site information is tertiary
-                        
-                        3. Validation Rules:
-                           - Cross-reference multiple sources
-                           - Verify data is country-specific
-                           - Check data is current (within last 6 months)
-                        
-                        CONFIDENCE LEVELS:
-                        HIGH: Direct employee count from LinkedIn or company career page
-                        MEDIUM: Derived from job postings and office data
-                        LOW: Limited data available
-                        
-                        IMPORTANT:
-                        - ALWAYS provide a single, specific number
-                        - NO ranges or approximations
-                        - Use the most recent data available
-                        - If uncertain, use the lower estimate"""},
-                        {"role": "user", "content": f"""Determine the EXACT employee count for {company}'s {country} office.
-                        
-                        Company: {company}
-                        Country: {country}
-                        Available Information:
-                        {web_info}
-                        
-                        Requirements:
-                        1. Provide ONE specific number
-                        2. Focus ONLY on {country} employees
-                        3. Use most recent data
-                        4. No ranges or approximations"""}
-                    ],
-                    functions=[{
-                        "name": "get_employee_count",
-                        "description": "Get the exact number of employees at a company",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "employee_count": {
-                                    "type": "integer",
-                                    "description": "The exact number of employees (must be a specific integer)"
-                                },
-                                "confidence": {
-                                    "type": "string",
-                                    "enum": ["HIGH", "MEDIUM", "LOW"],
-                                    "description": "Confidence level in the exact count"
-                                },
-                                "sources": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string"
-                                    },
-                                    "description": "Sources used to determine the exact count"
-                                },
-                                "explanation": {
-                                    "type": "string",
-                                    "description": "Explanation of how the exact number was determined"
-                                }
-                            },
-                            "required": ["employee_count", "confidence", "sources", "explanation"]
-                        }
-                    }],
-                    function_call={"name": "get_employee_count"}
-                )
-            except Exception as e:
-                if "quota" in str(e).lower():
-                    quota_exceeded = True
-                    results.append({
-                        "company": company,
-                        "error": "API quota exceeded. Please try again later.",
-                        "status": "quota_exceeded"
-                    })
-                    continue
-                else:
-                    raise e
-                
-            if response.choices[0].message.get("function_call"):
-                initial_result = json.loads(response.choices[0].message["function_call"]["arguments"])
-                
-                # Validate employee count
-                employee_count = validate_employee_count(initial_result.get("employee_count"))
-                if employee_count is None:
-                    raise ValueError(f"Invalid employee count received for {company}")
-                initial_result["employee_count"] = employee_count
-                
-                # Have GPT-4 review the estimate with country-specific context
+
+            # Cache the result
+            if using_redis:
                 try:
-                    reviewed_result = review_employee_count(company, country, initial_result, web_info)
-                except Exception as e:
-                    if "quota" in str(e).lower():
-                        # If quota exceeded during review, use initial result
-                        reviewed_result = initial_result
-                    else:
-                        raise e
-                
-                # Validate reviewed count
-                reviewed_count = validate_employee_count(reviewed_result.get("employee_count"))
-                if reviewed_count is None:
-                    # If review gives invalid count, use original
-                    reviewed_result["employee_count"] = employee_count
-                else:
-                    reviewed_result["employee_count"] = reviewed_count
-                
-                results.append({
-                    "company": company,
-                    "employee_count": reviewed_result["employee_count"],
-                    "confidence": reviewed_result["confidence"],
-                    "sources": ", ".join(reviewed_result["sources"]),
-                    "explanation": reviewed_result["explanation"],
-                    "status": "success"
-                })
-                
-                # Update progress in Redis if using it
-                if using_redis:
-                    processed = redis_client.hincrby(f"batch:{batch_id}", "processed", 1)
-                    total = int(redis_client.hget(f"batch:{batch_id}", "total") or 0)
-                    if processed >= total:
-                        redis_client.hset(f"batch:{batch_id}", "status", "completed")
-                        redis_client.set(f"results:{batch_id}", json.dumps(results))
-                        
-        except Exception as e:
-            error_msg = str(e)
-            if "quota" in error_msg.lower():
-                status = "quota_exceeded"
-                error_msg = "API quota exceeded. Please try again later."
-            else:
-                status = "error"
+                    redis_client.setex(cache_key, 3600*24, json.dumps(info))  # Cache for 24 hours
+                except:
+                    pass  # Ignore Redis errors
+                    
+            results.append(info)
             
+        except Exception as e:
+            print(f"Error processing {company}: {str(e)}")
             results.append({
-                "company": company,
-                "error": error_msg,
-                "status": status
+                'company': company,
+                'status': 'error',
+                'error': str(e)
             })
             
-            if status == "quota_exceeded":
-                quota_exceeded = True
-                
     return results
 
 @app.route('/')
@@ -550,8 +422,22 @@ def process_file():
                     "details": "No valid company names found in the first column"
                 }), 400
 
+            # Create progress key
+            progress_key = None
+            if using_redis:
+                try:
+                    progress_key = f"progress:{time.time()}"
+                    redis_client.hmset(progress_key, {
+                        'total': len(companies),
+                        'current': 0,
+                        'status': 'processing'
+                    })
+                    redis_client.expire(progress_key, 3600)  # Expire after 1 hour
+                except:
+                    pass  # Ignore Redis errors
+
             # Process in smaller batches to avoid timeouts
-            batch_size = 5
+            batch_size = 3  # Reduced batch size
             all_results = []
             
             print(f"Processing companies in batches of {batch_size}")
@@ -559,7 +445,7 @@ def process_file():
                 batch = companies[i:i + batch_size]
                 print(f"Processing batch {i//batch_size + 1}/{(len(companies) + batch_size - 1)//batch_size}")
                 try:
-                    results = process_company_batch(batch, country, None)
+                    results = process_company_batch(batch, country, progress_key)
                     all_results.extend(results)
                 except Exception as e:
                     print(f"Error processing batch: {str(e)}")
@@ -570,6 +456,13 @@ def process_file():
                         'status': 'error',
                         'error': f"Failed to process: {str(e)}"
                     } for company in batch])
+
+            # Update progress
+            if progress_key and using_redis:
+                try:
+                    redis_client.hset(progress_key, 'status', 'complete')
+                except:
+                    pass  # Ignore Redis errors
 
             print("Creating output CSV...")
             # Create CSV from results
@@ -597,14 +490,6 @@ def process_file():
             
             # Create response with all necessary headers
             response = make_response(output.getvalue())
-            response.headers.update({
-                'Content-Type': 'text/csv',
-                'Content-Disposition': f'attachment; filename=employee_counts_{timestamp}.csv',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Expose-Headers': 'Content-Disposition'
-            })
             return response
 
         except csv.Error as e:
