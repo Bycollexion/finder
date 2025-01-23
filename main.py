@@ -319,12 +319,30 @@ def process_company_batch(companies, country, batch_id):
 @app.route('/')
 def index():
     """Basic health check endpoint"""
-    return jsonify({"status": "healthy", "time": time.time()})
+    try:
+        # Check Redis connection
+        if using_redis:
+            redis_client.ping()
+            redis_status = "connected"
+        else:
+            redis_status = "using fallback"
+            
+        return jsonify({
+            "status": "healthy",
+            "time": time.time(),
+            "redis": redis_status
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "time": time.time()
+        }), 500
 
 @app.route('/health')
 def health_check():
     """Health check endpoint"""
-    return jsonify({"status": "healthy", "time": time.time()})
+    return index()
 
 @app.route('/api/countries', methods=['GET'])
 def get_countries():
@@ -617,6 +635,9 @@ def get_employee_count():
 redis_host = os.getenv('REDIS_HOST', 'localhost')
 redis_port = int(os.getenv('REDIS_PORT', 6379))
 redis_password = os.getenv('REDIS_PASSWORD')
+redis_client = None
+using_redis = False
+queue = None
 
 try:
     # Try connecting to Redis with authentication if password is provided
@@ -625,14 +646,18 @@ try:
             host=redis_host,
             port=redis_port,
             password=redis_password,
-            decode_responses=True
+            decode_responses=True,
+            socket_timeout=5,  # 5 second timeout
+            socket_connect_timeout=5
         )
     else:
         # Connect without authentication for local development
         redis_client = redis.Redis(
             host=redis_host,
             port=redis_port,
-            decode_responses=True
+            decode_responses=True,
+            socket_timeout=5,  # 5 second timeout
+            socket_connect_timeout=5
         )
     
     # Test the connection
@@ -641,7 +666,7 @@ try:
     using_redis = True
     # Configure RQ queue
     queue = Queue(connection=redis_client)
-except redis.ConnectionError as e:
+except (redis.ConnectionError, redis.TimeoutError) as e:
     print(f"Failed to connect to Redis: {e}")
     # Fallback to using local memory if Redis is not available
     from fakeredis import FakeRedis
@@ -652,4 +677,4 @@ except redis.ConnectionError as e:
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port)
