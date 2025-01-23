@@ -434,10 +434,14 @@ def health_check():
             "time": time.time()
         }), 500
 
-@app.route('/api/countries', methods=['GET'])
+@app.route('/api/countries', methods=['GET', 'OPTIONS'])
 def get_countries():
+    """Get list of supported countries"""
     try:
-        # Return a list of Asian countries and Australia
+        if request.method == 'OPTIONS':
+            return handle_preflight()
+
+        print("Getting countries list")
         countries = [
             {"id": "sg", "name": "Singapore"},
             {"id": "my", "name": "Malaysia"},
@@ -452,9 +456,25 @@ def get_countries():
             {"id": "tw", "name": "Taiwan"},
             {"id": "au", "name": "Australia"}
         ]
-        return jsonify(countries)
+        
+        # Create response with CORS headers
+        response = jsonify(countries)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Error getting countries: {str(e)}")
+        traceback.print_exc()
+        error_response = jsonify({
+            "error": "Failed to get countries",
+            "details": str(e)
+        })
+        error_response.headers['Access-Control-Allow-Origin'] = '*'
+        error_response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        error_response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return error_response, 500
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
