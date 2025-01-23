@@ -16,6 +16,7 @@ import random
 import traceback
 import googlesearch
 import json
+from googlesearch import search as google_search
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -45,11 +46,12 @@ def perform_web_search(query):
     """Perform web search and return results"""
     try:
         results = []
-        search_response = googlesearch.search(query, num_results=5)
-        if isinstance(search_response, list):
-            for result in search_response:
-                if isinstance(result, str):
-                    results.append({"url": result})
+        # Use google_search directly, which returns URLs as strings
+        search_results = google_search(query, num_results=5, lang="en")
+        for url in search_results:
+            if isinstance(url, str):
+                results.append({"url": url})
+        logger.debug(f"Search for '{query}' found {len(results)} results")
         return results
     except Exception as e:
         logger.error(f"Error in web search: {str(e)}")
@@ -58,17 +60,25 @@ def perform_web_search(query):
 def get_web_content(url):
     """Safely get content from a URL"""
     try:
-        response = requests.get(url, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()  # Raise an error for bad status codes
+        
         soup = BeautifulSoup(response.text, 'html.parser')
-        # Remove script and style elements
-        for script in soup(["script", "style"]):
-            script.decompose()
+        
+        # Remove unwanted elements
+        for element in soup(['script', 'style', 'nav', 'footer', 'header']):
+            element.decompose()
+            
         # Get text and clean it
         text = soup.get_text()
-        # Remove extra whitespace
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = ' '.join(chunk for chunk in chunks if chunk)
+        
+        logger.debug(f"Successfully fetched content from {url}")
         return text
     except Exception as e:
         logger.error(f"Error reading URL {url}: {str(e)}")
