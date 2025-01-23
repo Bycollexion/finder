@@ -63,7 +63,10 @@ def search_web_info(company, country):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"Error during web search: {str(e)}")
+        error_msg = str(e)
+        if "quota" in error_msg.lower():
+            return {"error": "quota_exceeded", "message": "API quota exceeded. Please try again later."}
+        print(f"Error during web search: {error_msg}")
         return "Error occurred during search. Using available data for estimation."
 
 def review_employee_count(company, country, initial_result, web_info):
@@ -139,7 +142,10 @@ def review_employee_count(company, country, initial_result, web_info):
         return initial_result
         
     except Exception as e:
-        print(f"Error reviewing employee count: {str(e)}")
+        error_msg = str(e)
+        if "quota" in error_msg.lower():
+            return initial_result
+        print(f"Error reviewing employee count: {error_msg}")
         return initial_result
 
 def validate_employee_count(count):
@@ -171,106 +177,135 @@ def validate_employee_count(count):
 def process_company_batch(companies, country, batch_id):
     """Process a batch of companies"""
     results = []
+    quota_exceeded = False
     
     for company in companies:
         try:
+            if quota_exceeded:
+                results.append({
+                    "company": company,
+                    "error": "API quota exceeded. Please try again later.",
+                    "status": "quota_exceeded"
+                })
+                continue
+
             web_info = search_web_info(company, country)
+            if isinstance(web_info, dict) and web_info.get("error") == "quota_exceeded":
+                quota_exceeded = True
+                results.append({
+                    "company": company,
+                    "error": "API quota exceeded. Please try again later.",
+                    "status": "quota_exceeded"
+                })
+                continue
             
             # Initial estimate using GPT-4
-            response = call_openai_with_retry(
-                messages=[
-                    {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
-                    Your task is to determine EXACT employee counts for specific country offices. DO NOT provide ranges.
-                    
-                    ANALYSIS PRIORITIES:
-                    1. LinkedIn Data (Primary Source):
-                       - Use exact employee counts from LinkedIn
-                       - Count employees who list the company and country
-                       - Use job posting volume as a supporting indicator
-                    
-                    2. Official Sources (Secondary Source):
-                       - Company career pages with exact team size
-                       - Job postings with office size information
-                       - Glassdoor/Indeed company information
-                    
-                    3. Office Information (Supporting Data):
-                       - Exact office capacity numbers
-                       - Specific floor space and employee density
-                       - Precise office location data
-                    
-                    ESTIMATION RULES:
-                    1. For All Companies:
-                       - Focus ONLY on the specific country office
-                       - Use ONLY current, verifiable data
-                       - Count only full-time employees
-                       - Exclude contractors unless specifically mentioned
-                    
-                    2. Data Priority:
-                       - LinkedIn employee count is primary source
-                       - Company career page data is secondary
-                       - Job site information is tertiary
-                    
-                    3. Validation Rules:
-                       - Cross-reference multiple sources
-                       - Verify data is country-specific
-                       - Check data is current (within last 6 months)
-                    
-                    CONFIDENCE LEVELS:
-                    HIGH: Direct employee count from LinkedIn or company career page
-                    MEDIUM: Derived from job postings and office data
-                    LOW: Limited data available
-                    
-                    IMPORTANT:
-                    - ALWAYS provide a single, specific number
-                    - NO ranges or approximations
-                    - Use the most recent data available
-                    - If uncertain, use the lower estimate"""},
-                    {"role": "user", "content": f"""Determine the EXACT employee count for {company}'s {country} office.
-                    
-                    Company: {company}
-                    Country: {country}
-                    Available Information:
-                    {web_info}
-                    
-                    Requirements:
-                    1. Provide ONE specific number
-                    2. Focus ONLY on {country} employees
-                    3. Use most recent data
-                    4. No ranges or approximations"""}
-                ],
-                functions=[{
-                    "name": "get_employee_count",
-                    "description": "Get the exact number of employees at a company",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "employee_count": {
-                                "type": "integer",
-                                "description": "The exact number of employees (must be a specific integer)"
-                            },
-                            "confidence": {
-                                "type": "string",
-                                "enum": ["HIGH", "MEDIUM", "LOW"],
-                                "description": "Confidence level in the exact count"
-                            },
-                            "sources": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
+            try:
+                response = call_openai_with_retry(
+                    messages=[
+                        {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
+                        Your task is to determine EXACT employee counts for specific country offices. DO NOT provide ranges.
+                        
+                        ANALYSIS PRIORITIES:
+                        1. LinkedIn Data (Primary Source):
+                           - Use exact employee counts from LinkedIn
+                           - Count employees who list the company and country
+                           - Use job posting volume as a supporting indicator
+                        
+                        2. Official Sources (Secondary Source):
+                           - Company career pages with exact team size
+                           - Job postings with office size information
+                           - Glassdoor/Indeed company information
+                        
+                        3. Office Information (Supporting Data):
+                           - Exact office capacity numbers
+                           - Specific floor space and employee density
+                           - Precise office location data
+                        
+                        ESTIMATION RULES:
+                        1. For All Companies:
+                           - Focus ONLY on the specific country office
+                           - Use ONLY current, verifiable data
+                           - Count only full-time employees
+                           - Exclude contractors unless specifically mentioned
+                        
+                        2. Data Priority:
+                           - LinkedIn employee count is primary source
+                           - Company career page data is secondary
+                           - Job site information is tertiary
+                        
+                        3. Validation Rules:
+                           - Cross-reference multiple sources
+                           - Verify data is country-specific
+                           - Check data is current (within last 6 months)
+                        
+                        CONFIDENCE LEVELS:
+                        HIGH: Direct employee count from LinkedIn or company career page
+                        MEDIUM: Derived from job postings and office data
+                        LOW: Limited data available
+                        
+                        IMPORTANT:
+                        - ALWAYS provide a single, specific number
+                        - NO ranges or approximations
+                        - Use the most recent data available
+                        - If uncertain, use the lower estimate"""},
+                        {"role": "user", "content": f"""Determine the EXACT employee count for {company}'s {country} office.
+                        
+                        Company: {company}
+                        Country: {country}
+                        Available Information:
+                        {web_info}
+                        
+                        Requirements:
+                        1. Provide ONE specific number
+                        2. Focus ONLY on {country} employees
+                        3. Use most recent data
+                        4. No ranges or approximations"""}
+                    ],
+                    functions=[{
+                        "name": "get_employee_count",
+                        "description": "Get the exact number of employees at a company",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "employee_count": {
+                                    "type": "integer",
+                                    "description": "The exact number of employees (must be a specific integer)"
                                 },
-                                "description": "Sources used to determine the exact count"
+                                "confidence": {
+                                    "type": "string",
+                                    "enum": ["HIGH", "MEDIUM", "LOW"],
+                                    "description": "Confidence level in the exact count"
+                                },
+                                "sources": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "description": "Sources used to determine the exact count"
+                                },
+                                "explanation": {
+                                    "type": "string",
+                                    "description": "Explanation of how the exact number was determined"
+                                }
                             },
-                            "explanation": {
-                                "type": "string",
-                                "description": "Explanation of how the exact number was determined"
-                            }
-                        },
-                        "required": ["employee_count", "confidence", "sources", "explanation"]
-                    }
-                }],
-                function_call={"name": "get_employee_count"}
-            )
-            
+                            "required": ["employee_count", "confidence", "sources", "explanation"]
+                        }
+                    }],
+                    function_call={"name": "get_employee_count"}
+                )
+            except Exception as e:
+                if "quota" in str(e).lower():
+                    quota_exceeded = True
+                    results.append({
+                        "company": company,
+                        "error": "API quota exceeded. Please try again later.",
+                        "status": "quota_exceeded"
+                    })
+                    continue
+                else:
+                    raise e
+                
             if response.choices[0].message.get("function_call"):
                 initial_result = json.loads(response.choices[0].message["function_call"]["arguments"])
                 
@@ -281,7 +316,14 @@ def process_company_batch(companies, country, batch_id):
                 initial_result["employee_count"] = employee_count
                 
                 # Have GPT-4 review the estimate with country-specific context
-                reviewed_result = review_employee_count(company, country, initial_result, web_info)
+                try:
+                    reviewed_result = review_employee_count(company, country, initial_result, web_info)
+                except Exception as e:
+                    if "quota" in str(e).lower():
+                        # If quota exceeded during review, use initial result
+                        reviewed_result = initial_result
+                    else:
+                        raise e
                 
                 # Validate reviewed count
                 reviewed_count = validate_employee_count(reviewed_result.get("employee_count"))
@@ -296,7 +338,8 @@ def process_company_batch(companies, country, batch_id):
                     "employee_count": reviewed_result["employee_count"],
                     "confidence": reviewed_result["confidence"],
                     "sources": ", ".join(reviewed_result["sources"]),
-                    "explanation": reviewed_result["explanation"]
+                    "explanation": reviewed_result["explanation"],
+                    "status": "success"
                 })
                 
                 # Update progress in Redis if using it
@@ -308,12 +351,22 @@ def process_company_batch(companies, country, batch_id):
                         redis_client.set(f"results:{batch_id}", json.dumps(results))
                         
         except Exception as e:
-            print(f"Error processing company {company}: {str(e)}")
+            error_msg = str(e)
+            if "quota" in error_msg.lower():
+                status = "quota_exceeded"
+                error_msg = "API quota exceeded. Please try again later."
+            else:
+                status = "error"
+            
             results.append({
                 "company": company,
-                "error": str(e)
+                "error": error_msg,
+                "status": status
             })
-    
+            
+            if status == "quota_exceeded":
+                quota_exceeded = True
+                
     return results
 
 @app.route('/')
