@@ -28,57 +28,26 @@ def clean_header(header):
 @app.after_request
 def after_request(response):
     """Add CORS headers to all responses"""
-    origin = clean_header(request.headers.get('Origin'))
+    origin = request.headers.get('Origin')
     print(f"Request origin: {origin}")
     
-    # Always allow the Vercel frontend and localhost
-    allowed_origins = [
-        'https://finder-git-main-bycollexions-projects.vercel.app',
-        'http://localhost:3000',
-        'http://localhost:5173'
-    ]
-    
-    if origin in allowed_origins:
-        response.headers['Access-Control-Allow-Origin'] = origin
-    else:
-        print(f"Warning: Unknown origin {origin}")
-        response.headers['Access-Control-Allow-Origin'] = '*'
+    if origin:
+        # List of allowed origins
+        allowed_origins = [
+            'http://localhost:3000',
+            'https://finder-git-main-bycollexions-projects.vercel.app',
+            'https://finder-bycollexions-projects.vercel.app'
+        ]
         
-    response.headers.update({
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Accept',
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Max-Age': '3600',
-        'Vary': 'Origin'
-    })
+        if origin in allowed_origins:
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            response.headers['Access-Control-Max-Age'] = '3600'
+    else:
+        print("Warning: Unknown origin", origin)
+        
     return response
-
-def handle_preflight():
-    """Handle CORS preflight request"""
-    response = make_response()
-    origin = clean_header(request.headers.get('Origin'))
-    
-    # Always allow the Vercel frontend and localhost
-    allowed_origins = [
-        'https://finder-git-main-bycollexions-projects.vercel.app',
-        'http://localhost:3000',
-        'http://localhost:5173'
-    ]
-    
-    if origin in allowed_origins:
-        response.headers['Access-Control-Allow-Origin'] = origin
-    else:
-        print(f"Warning: Unknown origin {origin}")
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        
-    response.headers.update({
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Accept',
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Max-Age': '3600',
-        'Vary': 'Origin'
-    })
-    return response, 204
 
 def search_web_info(company, country):
     """Search web for company information"""
@@ -227,11 +196,7 @@ def process_file():
 @app.route('/')
 def health_check():
     """Basic health check endpoint"""
-    try:
-        return jsonify({"status": "healthy"}), 200
-    except Exception as e:
-        print(f"Health check failed: {str(e)}")
-        return jsonify({"status": "unhealthy", "error": str(e)}), 500
+    return jsonify({"status": "healthy"}), 200
 
 @app.route('/api/countries', methods=['GET', 'OPTIONS'])
 def get_countries():
@@ -276,8 +241,10 @@ def get_countries():
         return error_response, 500
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
-def process_file():
-    """Process uploaded file"""
+def handle_process_file():
+    """Handle file processing endpoint"""
+    if request.method == 'OPTIONS':
+        return handle_preflight()
     return process_file()
 
 @app.route('/employee_count', methods=['POST'])
@@ -341,6 +308,26 @@ def get_employee_count():
         response = make_response(jsonify({"error": str(e)}), 500)
         response.headers['Content-Type'] = 'application/json'
         return response
+
+def handle_preflight():
+    """Handle CORS preflight request"""
+    response = make_response()
+    origin = request.headers.get('Origin')
+    
+    # List of allowed origins
+    allowed_origins = [
+        'http://localhost:3000',
+        'https://finder-git-main-bycollexions-projects.vercel.app',
+        'https://finder-bycollexions-projects.vercel.app'
+    ]
+    
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        response.headers['Access-Control-Max-Age'] = '3600'
+    
+    return response, 204
 
 @retry(
     retry=retry_if_exception_type((RateLimitError, APIError)),
