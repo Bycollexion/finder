@@ -39,6 +39,17 @@ api.interceptors.request.use(request => {
 api.interceptors.response.use(
   response => {
     console.log('Response:', response)
+    // Check if the response has a data property that contains the body
+    if (response.data && response.data.body) {
+      try {
+        // Parse the body if it's a string
+        response.data = typeof response.data.body === 'string' 
+          ? JSON.parse(response.data.body) 
+          : response.data.body;
+      } catch (error) {
+        console.error('Error parsing response body:', error);
+      }
+    }
     return response
   },
   error => {
