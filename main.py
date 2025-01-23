@@ -473,10 +473,9 @@ def process_file():
                     } for company in batch])
 
             print("Creating output CSV...")
-            # Create CSV from results
-            output = BytesIO()
-            text_output = TextIOWrapper(output, encoding='utf-8', write_through=True)
-            writer = csv.writer(text_output)
+            # Create CSV in memory using StringIO
+            si = StringIO()
+            writer = csv.writer(si)
             
             # Write header
             writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Status', 'Error/Explanation'])
@@ -493,26 +492,15 @@ def process_file():
                 ])
             
             print("Preparing file download...")
-            # Prepare file for download
-            output.seek(0)
+            # Create the response
+            output = make_response(si.getvalue())
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f'employee_counts_{timestamp}.csv'
             
-            try:
-                # Use send_file for proper file download handling
-                return send_file(
-                    output,
-                    mimetype='text/csv',
-                    as_attachment=True,
-                    download_name=filename,
-                    max_age=0
-                )
-            except Exception as e:
-                print(f"Error sending file: {str(e)}")
-                return jsonify({
-                    "error": "Failed to generate download",
-                    "details": str(e)
-                }), 500
+            # Set headers
+            output.headers["Content-Disposition"] = f"attachment; filename={filename}"
+            output.headers["Content-type"] = "text/csv"
+            return output
             
         except csv.Error as e:
             print(f"CSV parsing error: {str(e)}")
