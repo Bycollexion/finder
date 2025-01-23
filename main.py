@@ -83,19 +83,39 @@ def get_country_name(code):
     return country_map.get(code.lower(), code)
 
 def search_web(query):
-    """Search the web for the given query"""
+    """Search the web for the given query and extract URLs"""
     try:
-        response = requests.get(f"https://www.google.com/search?q={query}")
-        return response.text
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(
+            f"https://www.google.com/search?q={requests.utils.quote(query)}",
+            headers=headers
+        )
+        
+        # Extract URLs from the response using regex
+        urls = re.findall(r'href="(https?://[^"]+?)"', response.text)
+        # Filter out Google's own URLs and other irrelevant ones
+        filtered_urls = [
+            url for url in urls 
+            if not any(x in url for x in ['google.com', 'youtube.com', 'webcache'])
+        ]
+        return {'urls': filtered_urls[:5]}  # Return top 5 relevant URLs
     except Exception as e:
         logger.error(f"Error searching web: {str(e)}")
-        return ""
+        return {'urls': []}
 
 def read_url_content(url):
     """Read content from a URL"""
     try:
-        response = requests.get(url)
-        return response.text
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        # Extract text content using regex to remove HTML tags
+        text = re.sub(r'<[^>]+>', ' ', response.text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text[:5000]  # Limit content length
     except Exception as e:
         logger.error(f"Error reading URL content: {str(e)}")
         return ""
