@@ -12,6 +12,9 @@ from datetime import datetime
 from werkzeug.middleware.proxy_fix import ProxyFix
 import logging
 import re
+import googlesearch
+import requests
+from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -28,26 +31,156 @@ def clean_header(header):
         return None
     return header.rstrip(';').strip()
 
-def clean_count(text):
-    """Extract just the number/range from response"""
+def clean_count(text, company):
+    """Extract employee count with comparison operators"""
     # If response contains error indicators, return None
     error_phrases = ["sorry", "can't", "cannot", "don't", "unable", "exact number", "request"]
     if any(phrase in text.lower() for phrase in error_phrases):
         return None
         
-    # Extract numbers using regex
+    text = text.lower().strip()
+    
+    # Define companies that typically have smaller employee counts
+    small_companies = {'jobstreet', 'jobs db', 'tokopedia', 'goto'}
+    needs_scaling = company.lower() not in small_companies
+    
+    # Extract numbers
     numbers = re.findall(r'\d[\d,]*(?:\.\d+)?', text)
     if not numbers:
         return None
         
-    # Get the largest number in the text
-    largest = max([int(n.replace(',', '')) for n in numbers])
-    
-    # If number is too small, scale it up
-    if largest < 100:
-        largest *= 1000
+    try:
+        num = int(numbers[0].replace(',', ''))
+        # Only scale up if it's a large company and number seems too small
+        if needs_scaling and num < 1000:
+            num *= 1000
+            
+        # Handle comparison operators
+        if '>' in text or 'greater than' in text or 'more than' in text:
+            return f">{num}"
+        elif '<' in text or 'less than' in text:
+            return f"<{num}"
+        elif '>=' in text or 'greater than or equal' in text:
+            return f"≥{num}"
+        elif '<=' in text or 'less than or equal' in text:
+            return f"≤{num}"
+        else:
+            return str(num)
+    except:
+        return None
+
+def search_web(query):
+    """Perform web search"""
+    try:
+        # Implement web search logic here
+        # For demonstration purposes, return dummy results
+        results = googlesearch.search(query, num_results=5)
+        return [{"url": result} for result in results]
+    except Exception as e:
+        logger.error(f"Error performing web search: {str(e)}")
+        return []
+
+def read_url_content(url):
+    """Read content from URL"""
+    try:
+        # Implement URL content reading logic here
+        # For demonstration purposes, return dummy content
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        return soup.get_text()
+    except Exception as e:
+        logger.error(f"Error reading URL content: {str(e)}")
+        return None
+
+def search_web_info(company, country):
+    """Search for company employee count information"""
+    try:
+        # Skip if company name is a header
+        if company.lower() == 'company':
+            return None
+            
+        # Try multiple search queries to get better data
+        search_queries = [
+            f"{company} {country} employees site:linkedin.com",
+            f"{company} {country} number of employees 2024",
+            f"{company} office {country} team size"
+        ]
         
-    return str(largest)
+        relevant_text = ""
+        for query in search_queries:
+            search_results = search_web({"query": query})
+            if search_results:
+                for result in search_results:
+                    try:
+                        content = read_url_content({"Url": result["url"]})
+                        if content:
+                            relevant_text += f"\nSource ({result['url']}):\n{content}\n"
+                    except:
+                        continue
+        
+        # Now ask OpenAI with the search results as context
+        messages = [
+            {
+                "role": "system", 
+                "content": """You are an employee count bot. Return ONLY numbers with comparison operators.
+                ALWAYS use comparison operators (>, <, =) since exact numbers are hard to verify.
+                Examples of good responses:
+                - >500 (more than 500 employees)
+                - <2000 (less than 2000 employees)
+                - >100 (more than 100 employees)
+                Bad responses (never do these):
+                - exact numbers without operators (use > or < instead)
+                - "Sorry, I can't..."
+                - "The company has..."
+                - "As an AI..."
+                Just return the number with operator, nothing else.
+                
+                Base your answer on the provided search results. If no clear data is found,
+                return '>100' to indicate uncertainty."""
+            },
+            {
+                "role": "user",
+                "content": f"""Based on these search results:
+                {relevant_text}
+                
+                How many employees does {company} have in {country}? 
+                Return ONLY a number with comparison operator (>, <, =).
+                Be specific to this country's office, not global numbers.
+                If multiple sources give different numbers, use the most recent one."""
+            }
+        ]
+        
+        response = call_openai_with_retry(messages)
+        raw_count = response.choices[0].message.content.strip()
+        
+        # Clean the response
+        count = clean_count(raw_count, company)
+        
+        # If cleaning failed, use default values with comparison operators
+        if count is None:
+            count = '>100'  # Conservative default when no data found
+            confidence = "Low"
+        else:
+            # Add comparison operator if missing
+            if not any(op in count for op in ['>', '<', '=']):
+                count = f">{count}"  # Default to greater than if no operator
+            confidence = "High" if relevant_text else "Medium"  # High confidence only if we found search results
+        
+        logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
+        
+        return {
+            "Company": company,
+            "Employee Count": count,
+            "Confidence": confidence
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting info for {company}: {str(e)}")
+        return {
+            "Company": company,
+            "Employee Count": ">100",
+            "Confidence": "Low"
+        }
 
 # Configure CORS
 CORS(app, resources={
@@ -132,63 +265,6 @@ def get_countries():
         }), 500
 
 # Helper functions
-def search_web_info(company, country):
-    """Search for company employee count information"""
-    try:
-        messages = [
-            {
-                "role": "system", 
-                "content": """You are an employee count bot. ONLY return a number.
-                Examples of good responses:
-                - 1500
-                - 3000
-                - 2500
-                Bad responses (never do these):
-                - "Sorry, I can't..."
-                - "The exact number..."
-                - "As an AI..."
-                Just return the number, nothing else."""
-            },
-            {
-                "role": "user",
-                "content": f"How many employees does {company} have in Singapore? Return ONLY a number."
-            }
-        ]
-        
-        response = call_openai_with_retry(messages)
-        raw_count = response.choices[0].message.content.strip()
-        
-        # Clean the response
-        count = clean_count(raw_count)
-        
-        # If cleaning failed, use default values
-        if count is None:
-            if company.lower() in ['google', 'facebook', 'amazon']:
-                count = '2000'
-            elif company.lower() in ['grab', 'shopee', 'sea']:
-                count = '3000'
-            else:
-                count = '1500'
-            confidence = "Low"
-        else:
-            confidence = "High"
-        
-        logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
-        
-        return {
-            "Company": company,
-            "Employee Count": count,
-            "Confidence": confidence
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting info for {company}: {str(e)}")
-        return {
-            "Company": company,
-            "Employee Count": "1500",
-            "Confidence": "Low"
-        }
-
 def process_company_batch(companies, country):
     """Process a batch of companies"""
     try:
@@ -238,7 +314,8 @@ def process_file():
         
         # Parse CSV
         reader = csv.reader(StringIO(content))
-        companies = [row[0].strip() for row in reader if row]  # Get first column and strip whitespace
+        next(reader)  # Skip header row
+        companies = [row[0].strip() for row in reader if row and row[0].strip() and row[0].strip().lower() != 'company']
         
         if not companies:
             logger.error("No companies found in file")
@@ -263,9 +340,10 @@ def process_file():
         writer = csv.writer(si)
         writer.writerow(['Company', 'Employee Count', 'Confidence'])
         for result in all_results:
+            count = result.get('Employee Count', '')
             writer.writerow([
                 result.get('Company', ''),
-                result.get('Employee Count', ''),
+                count,
                 result.get('Confidence', '')
             ])
         
