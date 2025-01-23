@@ -1,10 +1,24 @@
 from http.server import BaseHTTPRequestHandler
+import json
 
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        response = {'message': 'Hello from Python!'}
-        self.wfile.write(str(response).encode())
+def handler(request):
+    if request.get('method', '') == 'OPTIONS':
+        return {
+            'statusCode': 204,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            }
+        }
+    
+    return {
+        'statusCode': 200,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        },
+        'body': json.dumps({
+            'message': 'Hello from Python!'
+        })
+    }
