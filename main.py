@@ -140,6 +140,45 @@ def search_web_info(company, country):
             "Confidence": "Low"
         }
 
+# Basic error handlers
+@app.errorhandler(404)
+def not_found_error(error):
+    logger.error(f"Error 404: {str(error)}")
+    return jsonify({"error": "Not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Error 500: {str(error)}")
+    return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/')
+def health_check():
+    """Basic health check endpoint"""
+    return "OK", 200
+
+@app.route('/api/countries', methods=['GET'])
+def get_countries():
+    """Get list of supported countries"""
+    try:
+        countries = [
+            {"id": "sg", "name": "Singapore"},
+            {"id": "my", "name": "Malaysia"},
+            {"id": "id", "name": "Indonesia"},
+            {"id": "th", "name": "Thailand"},
+            {"id": "vn", "name": "Vietnam"},
+            {"id": "ph", "name": "Philippines"},
+            {"id": "jp", "name": "Japan"},
+            {"id": "kr", "name": "South Korea"},
+            {"id": "cn", "name": "China"},
+            {"id": "hk", "name": "Hong Kong"},
+            {"id": "tw", "name": "Taiwan"},
+            {"id": "au", "name": "Australia"}
+        ]
+        return jsonify(countries)
+    except Exception as e:
+        logger.error(f"Error getting countries: {str(e)}")
+        return jsonify({"error": "Failed to get countries"}), 500
+
 @app.route('/api/process', methods=['POST'])
 def process_file():
     """Process uploaded CSV file"""
