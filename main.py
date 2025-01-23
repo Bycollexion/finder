@@ -42,76 +42,120 @@ def clean_count(text):
     return None
 
 def search_web(query):
-    """Perform web search"""
+    """Perform web search and return results"""
     try:
-        # Implement web search logic here
-        # For demonstration purposes, return dummy results
-        results = googlesearch.search(query, num_results=5)
-        return [{"url": result} for result in results]
+        results = []
+        search_response = googlesearch.search(query, num_results=5)
+        if isinstance(search_response, list):
+            for result in search_response:
+                if isinstance(result, str):
+                    results.append({"url": result})
+        return results
     except Exception as e:
-        logger.error(f"Error performing web search: {str(e)}")
+        logger.error(f"Error in web search: {str(e)}")
         return []
 
-def read_url_content(url):
-    """Read content from URL"""
+def get_web_content(url):
+    """Safely get content from a URL"""
     try:
-        # Implement URL content reading logic here
-        # For demonstration purposes, return dummy content
         response = requests.get(url)
         soup = BeautifulSoup(response.text, 'html.parser')
         return soup.get_text()
     except Exception as e:
-        logger.error(f"Error reading URL content: {str(e)}")
-        return None
+        logger.error(f"Error reading URL {url}: {str(e)}")
+        return ""
 
 def search_web_info(company, country):
     """Search for company employee count information"""
     try:
-        # Skip if company name is a header
         if company.lower() == 'company':
             return None
             
-        # First try direct employee count searches
-        primary_queries = [
+        all_data = {
+            "employee_counts": [],
+            "linkedin_data": [],
+            "news_data": [],
+            "hiring_data": []
+        }
+        
+        # 1. Direct employee count searches
+        count_queries = [
             f"{company} {country} office employees",
             f"{company} {country} office size",
             f"{company} {country} staff count"
         ]
         
-        # Additional context searches
-        context_queries = [
-            f"{company} {country} site:linkedin.com",  # LinkedIn profiles
-            f"{company} {country} office expansion news",  # Recent office news
-            f"{company} {country} hiring 2024",  # Recent hiring info
-            f"{company} {country} headquarters",  # Office details
+        for query in count_queries:
+            results = search_web(query)
+            for result in results:
+                content = get_web_content(result['url'])
+                if content and company.lower() in content.lower() and country.lower() in content.lower():
+                    all_data["employee_counts"].append({
+                        "source": result['url'],
+                        "content": content
+                    })
+
+        # 2. LinkedIn data
+        linkedin_queries = [
+            f"site:linkedin.com {company} {country} employees",
+            f"site:linkedin.com {company} {country} office"
         ]
         
-        relevant_text = ""
+        for query in linkedin_queries:
+            results = search_web(query)
+            for result in results:
+                if "linkedin.com" in result['url'].lower():
+                    content = get_web_content(result['url'])
+                    if content:
+                        all_data["linkedin_data"].append({
+                            "source": result['url'],
+                            "content": content
+                        })
+
+        # 3. News and hiring data
+        news_queries = [
+            f"{company} {country} office expansion news",
+            f"{company} {country} hiring 2024",
+            f"{company} {country} jobs"
+        ]
         
-        # Try primary queries first
-        for query in primary_queries:
-            search_results = search_web({"query": query})
-            if search_results:
-                for result in search_results:
-                    try:
-                        content = read_url_content({"Url": result["url"]})
-                        if content and company.lower() in content.lower() and country.lower() in content.lower():
-                            relevant_text += f"\nSource (Employee Count - {result['url']}):\n{content}\n"
-                    except:
-                        continue
+        for query in news_queries:
+            results = search_web(query)
+            for result in results:
+                content = get_web_content(result['url'])
+                if content:
+                    if "job" in result['url'].lower() or "career" in result['url'].lower():
+                        all_data["hiring_data"].append({
+                            "source": result['url'],
+                            "content": content
+                        })
+                    else:
+                        all_data["news_data"].append({
+                            "source": result['url'],
+                            "content": content
+                        })
         
-        # If no direct employee count found, try context queries
-        if not relevant_text:
-            for query in context_queries:
-                search_results = search_web({"query": query})
-                if search_results:
-                    for result in search_results:
-                        try:
-                            content = read_url_content({"Url": result["url"]})
-                            if content and company.lower() in content.lower() and country.lower() in content.lower():
-                                relevant_text += f"\nSource (Context - {result['url']}):\n{content}\n"
-                        except:
-                            continue
+        # Format data for OpenAI
+        formatted_text = ""
+        if all_data["employee_counts"]:
+            formatted_text += "\nDirect Employee Count Sources:\n"
+            for item in all_data["employee_counts"]:
+                formatted_text += f"Source: {item['source']}\n{item['content']}\n"
+        
+        if all_data["linkedin_data"]:
+            formatted_text += "\nLinkedIn Data:\n"
+            for item in all_data["linkedin_data"]:
+                formatted_text += f"Source: {item['source']}\n{item['content']}\n"
+        
+        if all_data["news_data"]:
+            formatted_text += "\nNews Data:\n"
+            for item in all_data["news_data"]:
+                formatted_text += f"Source: {item['source']}\n{item['content']}\n"
+        
+        if all_data["hiring_data"]:
+            formatted_text += "\nHiring Data:\n"
+            for item in all_data["hiring_data"]:
+                formatted_text += f"Source: {item['source']}\n{item['content']}\n"
         
         # Ask OpenAI to analyze all the data
         messages = [
@@ -146,7 +190,7 @@ def search_web_info(company, country):
             {
                 "role": "user",
                 "content": f"""Based on these search results:
-                {relevant_text}
+                {formatted_text}
                 
                 How many employees does {company} have in their {country} office?
                 If you find a specific number, use that.
@@ -161,15 +205,16 @@ def search_web_info(company, country):
         # Clean the response to get just the number
         count = clean_count(raw_count)
         
-        # Set confidence based on data source
-        if "Employee Count -" in relevant_text:
+        # Set confidence based on data sources
+        if all_data["employee_counts"]:
             confidence = "High"  # Found direct employee count
-        elif relevant_text:
+        elif all_data["linkedin_data"] or all_data["news_data"]:
             confidence = "Medium"  # Used LinkedIn/news data
         else:
             confidence = "Low"  # Pure estimate
         
         logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
+        logger.debug(f"Data sources found: {[k for k,v in all_data.items() if v]}")
         
         return {
             "Company": company,
