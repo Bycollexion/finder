@@ -20,9 +20,12 @@ from functools import lru_cache
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Flask app initialization
+# Initialize Flask app
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Configure OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Helper functions
 def clean_header(header):
@@ -37,6 +40,13 @@ def clean_count(text):
     numbers = re.findall(r'\d[\d,]*(?:\.\d+)?', text)
     if numbers:
         # Get the first number found
+        return numbers[0].replace(',', '')
+    return None
+
+def extract_number(text):
+    """Extract the first number from text"""
+    numbers = re.findall(r'\b\d{2,6}\b', text)  # Look for numbers between 2-6 digits
+    if numbers:
         return numbers[0].replace(',', '')
     return None
 
@@ -113,150 +123,126 @@ def cached_web_content(url):
         return ""
 
 def search_web_info(company, country):
-    """Search for company employee count information"""
+    """Search for company employee count information using OpenAI"""
     try:
         if company.lower() == 'company':
             return None
-            
-        all_data = {
-            "employee_counts": [],
-            "linkedin_data": [],
-            "news_data": [],
-            "hiring_data": []
-        }
-        
-        # Combine queries to reduce number of searches
-        search_queries = [
-            # Primary search with multiple terms
-            f"{company} {country} office employees size staff count",
-            # LinkedIn specific search
-            f"site:linkedin.com {company} {country} employees office",
-            # News and hiring combined
-            f"{company} {country} office expansion hiring jobs news"
-        ]
-        
-        for query in search_queries:
-            results = cached_web_search(query)
-            for result in results:
-                # First check if the snippet contains relevant info
-                if company.lower() not in result['snippet'].lower() or country.lower() not in result['snippet'].lower():
-                    continue
-                    
-                # Then fetch full content if needed
-                content = cached_web_content(result['url'])
-                if not content:
-                    content = result['snippet']  # Use snippet if can't fetch full content
-                    
-                # Categorize the result
-                if "linkedin.com" in result['url'].lower():
-                    all_data["linkedin_data"].append({
-                        "source": result['url'],
-                        "content": content,
-                        "title": result['title']
-                    })
-                elif "job" in result['url'].lower() or "career" in result['url'].lower():
-                    all_data["hiring_data"].append({
-                        "source": result['url'],
-                        "content": content,
-                        "title": result['title']
-                    })
-                elif "news" in result['url'].lower():
-                    all_data["news_data"].append({
-                        "source": result['url'],
-                        "content": content,
-                        "title": result['title']
-                    })
-                else:
-                    all_data["employee_counts"].append({
-                        "source": result['url'],
-                        "content": content,
-                        "title": result['title']
-                    })
-        
-        # Format data for OpenAI
-        formatted_text = ""
-        for category, items in all_data.items():
-            if items:
-                formatted_text += f"\n{category.replace('_', ' ').title()}:\n"
-                for item in items:
-                    formatted_text += f"Source: {item['source']}\nTitle: {item['title']}\n{item['content']}\n"
-        
-        logger.debug(f"Found data for {company}:")
-        for category, items in all_data.items():
-            logger.debug(f"- {category}: {len(items)} items")
-            
-        # Ask OpenAI to analyze all the data
+
+        # First ask GPT to search and analyze
         messages = [
             {
-                "role": "system", 
-                "content": f"""You are an employee count estimator for {country} offices.
-                Analyze the provided data in this order:
-                1. Direct employee count mentions
-                2. LinkedIn data (employee profiles, job posts)
-                3. News about office size/expansion
-                4. Recent hiring information
-                
-                Use this data to provide either:
-                - Exact number if found in reliable sources
-                - Educated estimate based on:
-                  * LinkedIn profiles in {country}
-                  * Recent hiring posts
-                  * Office size/location
-                  * Industry standards in {country}
-                
-                Examples of good responses:
-                - 250 (from direct source)
-                - 300 (estimated from LinkedIn + news)
-                
-                Bad responses (never do these):
-                - Global employee counts
-                - Ranges or approximate numbers
-                - Any explanation text
-                
-                Just return a single number for the {country} office."""
+                "role": "system",
+                "content": f"""You are an expert at finding employee counts for company offices. 
+                Search for information about {company}'s office in {country}.
+                Focus on:
+                1. Direct employee counts for the {country} office
+                2. LinkedIn data about employees in {country}
+                3. Recent news about office size/expansion in {country}
+                4. Job postings and hiring information in {country}
+
+                Format your response as:
+                Employee Counts:
+                [List specific numbers found with sources]
+
+                LinkedIn Data:
+                [Summary of LinkedIn information]
+
+                News:
+                [Relevant news about office size]
+
+                Hiring:
+                [Information about current hiring]
+
+                Be specific to {country} office, not global numbers.
+                Include URLs for sources when available."""
             },
             {
                 "role": "user",
-                "content": f"""Based on these search results:
-                {formatted_text}
-                
-                How many employees does {company} have in their {country} office?
-                If you find a specific number, use that.
-                Otherwise, estimate based on LinkedIn profiles, news, and hiring data.
-                Must be specific to {country}, not global numbers."""
+                "content": f"How many employees does {company} have in their {country} office? Search the web and analyze the data."
             }
         ]
-        
-        response = call_openai_with_retry(messages)
-        raw_count = response.choices[0].message.content.strip()
-        
-        # Clean the response to get just the number
-        count = clean_count(raw_count)
-        
-        # Set confidence based on data sources
-        if all_data["employee_counts"]:
-            confidence = "High"  # Found direct employee count
-        elif all_data["linkedin_data"] or all_data["news_data"]:
-            confidence = "Medium"  # Used LinkedIn/news data
-        else:
-            confidence = "Low"  # Pure estimate
-        
-        logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
-        logger.debug(f"Data sources found: {[k for k,v in all_data.items() if v]}")
-        
-        return {
-            "Company": company,
-            "Employee Count": count if count else "1000",
-            "Confidence": confidence
-        }
+
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1000
+        )
+
+        web_data = response.choices[0].message['content']
+
+        return call_openai_with_retry(company, country, web_data)
         
     except Exception as e:
-        logger.error(f"Error getting info for {company}: {str(e)}")
-        return {
-            "Company": company,
-            "Employee Count": "1000",
-            "Confidence": "Low"
-        }
+        logger.error(f"Error searching web info: {str(e)}")
+        return None
+
+def call_openai_with_retry(company, country, web_data):
+    """Call OpenAI API with retry logic"""
+    max_retries = 3
+    base_delay = 1
+    
+    for attempt in range(max_retries):
+        try:
+            messages = [
+                {
+                    "role": "system",
+                    "content": f"""You are an expert at estimating employee counts for company offices.
+                    Analyze the provided data about {company}'s office in {country}.
+                    Return ONLY a number representing your best estimate of employees in the {country} office.
+                    If you find a specific number from a reliable source, use that.
+                    Otherwise, estimate based on available data.
+                    Must be specific to {country} office, not global numbers.
+                    
+                    Rules:
+                    1. Return ONLY a number, no text
+                    2. Numbers should be between 20-50,000
+                    3. If no reliable data, estimate based on office size/type
+                    4. Prefer recent data over old
+                    5. Local office numbers only, not global
+                    
+                    Example good responses:
+                    250
+                    1500
+                    
+                    Bad responses (never do these):
+                    "About 250 employees"
+                    "250-300 employees"
+                    "250 globally"
+                    """
+                },
+                {
+                    "role": "user",
+                    "content": f"Based on this data, estimate employees in {company}'s {country} office:\n{web_data}"
+                }
+            ]
+            
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=150
+            )
+            
+            count = extract_number(response.choices[0].message['content'])
+            confidence = "High" if count else "Low"
+            
+            logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
+            logger.debug(f"Data sources found: {web_data}")
+            
+            return {
+                "Company": company,
+                "Employee Count": count if count else "1000",
+                "Confidence": confidence
+            }
+            
+        except Exception as e:
+            if attempt == max_retries - 1:  # Last attempt
+                logger.error(f"Error calling OpenAI API: {str(e)}")
+                return None
+            else:
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 0.1)
+                time.sleep(delay)
 
 # Configure CORS
 CORS(app, resources={
@@ -438,46 +424,6 @@ def process_file():
     except Exception as e:
         logger.error(f"Error processing file: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
-# Helper functions
-def call_openai_with_retry(messages, functions=None, function_call=None, model="gpt-4"):
-    """Make OpenAI API call with retry logic and model fallback"""
-    max_retries = 3
-    retry_delay = 1
-    
-    for attempt in range(max_retries):
-        try:
-            # Configure the API call
-            api_call_params = {
-                "model": model,
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": 150
-            }
-            
-            # Add functions if provided
-            if functions:
-                api_call_params["functions"] = functions
-            if function_call:
-                api_call_params["function_call"] = function_call
-                
-            # Make the API call
-            return openai.ChatCompletion.create(**api_call_params)
-            
-        except openai.error.RateLimitError:
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(retry_delay + random.uniform(0, 1))
-            retry_delay *= 2
-            
-        except openai.error.APIError:
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(retry_delay)
-            retry_delay *= 2
-            
-        except Exception:
-            raise
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
