@@ -10,31 +10,28 @@ import traceback
 from io import StringIO
 from datetime import datetime
 from werkzeug.middleware.proxy_fix import ProxyFix
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Flask app initialization
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Configure CORS
-CORS(app, resources={
-    r"/*": {
-        "origins": [
-            "http://localhost:3000",
-            "https://finder-git-main-bycollexions-projects.vercel.app",
-            "https://finder-bycollexions-projects.vercel.app"
-        ],
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
+# Configure CORS - allow all origins for now to debug
+CORS(app, supports_credentials=True)
 
 # Basic error handlers
 @app.errorhandler(404)
 def not_found_error(error):
+    logger.error(f"Error 404: {str(error)}")
     return jsonify({"error": "Not found"}), 404
 
 @app.errorhandler(500)
 def internal_error(error):
+    logger.error(f"Error 500: {str(error)}")
     return jsonify({"error": "Internal server error"}), 500
 
 # Helper functions
@@ -46,6 +43,7 @@ def clean_header(header):
 
 def handle_preflight():
     """Handle CORS preflight request"""
+    logger.debug("Handling OPTIONS request")
     response = make_response()
     origin = request.headers.get('Origin')
     
@@ -66,29 +64,27 @@ def handle_preflight():
 
 @app.after_request
 def after_request(response):
-    """Add CORS headers to all responses"""
-    origin = request.headers.get('Origin')
-    if origin in [
-        'http://localhost:3000',
-        'https://finder-git-main-bycollexions-projects.vercel.app',
-        'https://finder-bycollexions-projects.vercel.app'
-    ]:
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-        response.headers['Access-Control-Max-Age'] = '3600'
+    """Log response details"""
+    logger.debug(f"Response status: {response.status}")
+    logger.debug(f"Response headers: {dict(response.headers)}")
     return response
 
 # API Endpoints
 @app.route('/')
 def health_check():
     """Basic health check endpoint"""
+    logger.debug(f"Received request: {request.method} {request.path}")
+    logger.debug(f"Headers: {dict(request.headers)}")
     return "OK", 200
 
 @app.route('/api/countries', methods=['GET', 'OPTIONS'])
 def get_countries():
     """Get list of supported countries"""
+    logger.debug(f"Received request: {request.method} {request.path}")
+    logger.debug(f"Headers: {dict(request.headers)}")
+    
     if request.method == 'OPTIONS':
+        logger.debug("Handling OPTIONS request")
         return handle_preflight()
 
     try:
@@ -107,15 +103,24 @@ def get_countries():
             {"id": "au", "name": "Australia"}
         ]
         
-        return jsonify(countries)
+        logger.debug(f"Sending response: {countries}")
+        response = make_response(jsonify(countries))
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = '*'
+        response.headers['Content-Type'] = 'application/json'
+        return response
 
     except Exception as e:
-        print(f"Error getting countries: {str(e)}")
-        traceback.print_exc()
-        return jsonify({
+        logger.error(f"Error getting countries: {str(e)}")
+        logger.error(traceback.format_exc())
+        response = make_response(jsonify({
             "error": "Failed to get countries",
             "details": str(e)
-        }), 500
+        }))
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Content-Type'] = 'application/json'
+        return response, 500
 
 # Helper functions
 def search_web_info(company, country):
@@ -144,7 +149,7 @@ def search_web_info(company, country):
         }
         
     except Exception as e:
-        print(f"Error getting info for {company}: {str(e)}")
+        logger.error(f"Error getting info for {company}: {str(e)}")
         return {
             "Company": company,
             "Employee Count": "Error",
@@ -156,55 +161,63 @@ def process_company_batch(companies, country):
     try:
         return [search_web_info(company, country) for company in companies]
     except Exception as e:
-        print(f"Error processing batch: {str(e)}")
+        logger.error(f"Error processing batch: {str(e)}")
         return []
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def handle_process_file():
     """Handle file processing endpoint"""
+    logger.debug(f"Received request: {request.method} {request.path}")
+    logger.debug(f"Headers: {dict(request.headers)}")
+    
     if request.method == 'OPTIONS':
+        logger.debug("Handling OPTIONS request")
         return handle_preflight()
         
     try:
         if 'file' not in request.files:
+            logger.error("No file uploaded")
             return jsonify({"error": "No file uploaded"}), 400
             
         file = request.files['file']
         country = request.form.get('country', '').strip()
         
         if not file or file.filename == '':
+            logger.error("No file selected")
             return jsonify({"error": "No file selected"}), 400
             
         if not country:
+            logger.error("No country specified")
             return jsonify({"error": "No country specified"}), 400
             
-        print(f"Processing file '{file.filename}' for country: {country}")
+        logger.debug(f"Processing file '{file.filename}' for country: {country}")
         
         # Read CSV content
         content = file.read().decode('utf-8')
-        print(f"Successfully read file content, length: {len(content)}")
+        logger.debug(f"Successfully read file content, length: {len(content)}")
         
         # Parse CSV
         reader = csv.reader(StringIO(content))
         companies = [row[0].strip() for row in reader if row and row[0].strip()]
         
         if not companies:
+            logger.error("No companies found in file")
             return jsonify({"error": "No companies found in file"}), 400
             
-        print(f"Found {len(companies)} companies")
+        logger.debug(f"Found {len(companies)} companies")
         
         # Process in small batches
         batch_size = 2
         batches = [companies[i:i + batch_size] for i in range(0, len(companies), batch_size)]
-        print(f"Processing companies in batches of {batch_size}")
+        logger.debug(f"Processing companies in batches of {batch_size}")
         
         all_results = []
         for i, batch in enumerate(batches, 1):
-            print(f"Processing batch {i}/{len(batches)}")
+            logger.debug(f"Processing batch {i}/{len(batches)}")
             results = process_company_batch(batch, country)
             all_results.extend(results)
 
-        print("Creating output CSV...")
+        logger.debug("Creating output CSV...")
         # Create CSV in memory
         si = StringIO()
         writer = csv.writer(si)
@@ -220,7 +233,7 @@ def handle_process_file():
                 result.get('Confidence', '')
             ])
         
-        print("Preparing file download...")
+        logger.debug("Preparing file download...")
         output = make_response(si.getvalue())
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'employee_counts_{timestamp}.csv'
@@ -230,7 +243,7 @@ def handle_process_file():
         return output
         
     except Exception as e:
-        print(f"Error processing file: {str(e)}")
+        logger.error(f"Error processing file: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # Helper functions
