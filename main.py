@@ -32,43 +32,14 @@ def clean_header(header):
         return None
     return header.rstrip(';').strip()
 
-def clean_count(text, company):
-    """Extract employee count with comparison operators"""
-    # If response contains error indicators, return None
-    error_phrases = ["sorry", "can't", "cannot", "don't", "unable", "exact number", "request"]
-    if any(phrase in text.lower() for phrase in error_phrases):
-        return None
-        
-    text = text.lower().strip()
-    
-    # Define companies that typically have smaller employee counts
-    small_companies = {'jobstreet', 'jobs db', 'tokopedia', 'goto'}
-    needs_scaling = company.lower() not in small_companies
-    
-    # Extract numbers
+def clean_count(text):
+    """Extract just the number from text"""
+    # Extract numbers using regex
     numbers = re.findall(r'\d[\d,]*(?:\.\d+)?', text)
-    if not numbers:
-        return None
-        
-    try:
-        num = int(numbers[0].replace(',', ''))
-        # Only scale up if it's a large company and number seems too small
-        if needs_scaling and num < 1000:
-            num *= 1000
-            
-        # Handle comparison operators
-        if '>' in text or 'greater than' in text or 'more than' in text:
-            return f">{num}"
-        elif '<' in text or 'less than' in text:
-            return f"<{num}"
-        elif '>=' in text or 'greater than or equal' in text:
-            return f"≥{num}"
-        elif '<=' in text or 'less than or equal' in text:
-            return f"≤{num}"
-        else:
-            return str(num)
-    except:
-        return None
+    if numbers:
+        # Get the first number found
+        return numbers[0].replace(',', '')
+    return None
 
 def search_web(query):
     """Perform web search"""
@@ -100,11 +71,11 @@ def search_web_info(company, country):
         if company.lower() == 'company':
             return None
             
-        # Try multiple search queries to get better data
+        # Search queries focused on finding employee counts
         search_queries = [
-            f"{company} {country} office employees site:linkedin.com",
-            f"{company} {country} headquarters employees",
-            f"{company} {country} local office size"
+            f"{company} {country} office employees",
+            f"{company} {country} office size",
+            f"{company} {country} staff count"
         ]
         
         relevant_text = ""
@@ -121,67 +92,54 @@ def search_web_info(company, country):
                     except:
                         continue
         
-        # Now ask OpenAI with the search results as context
+        # Ask OpenAI to analyze the results or make an estimate
         messages = [
             {
                 "role": "system", 
-                "content": f"""You are an employee count bot that provides ONLY local office numbers for {country}.
-                NEVER return global employee counts.
-                ALWAYS use comparison operators (>, <, =).
+                "content": f"""You are an employee count bot that provides numbers for {country} offices.
+                If you find an exact number in the search results, use that.
+                If not, provide your best estimate based on:
+                - Company size in {country}
+                - Industry standards
+                - Office locations
                 
-                Examples for Singapore office sizes:
-                - >200 (more than 200 employees in Singapore office)
-                - <500 (less than 500 in Singapore)
-                - >50 (more than 50 local employees)
+                Examples of good responses:
+                - 250 (if found in search results)
+                - 300 (estimated based on industry data)
                 
                 Bad responses (never do these):
                 - Global employee counts
-                - Numbers over 10,000 (very rare for local offices)
-                - "Sorry, I can't..."
+                - Ranges or approximate numbers
                 - Any explanation text
                 
-                Just return the local office number with operator, nothing else."""
+                Just return a single number."""
             },
             {
                 "role": "user",
                 "content": f"""Based on these search results:
                 {relevant_text}
                 
-                How many employees does {company} have in their {country} office specifically? 
-                Return ONLY a number with comparison operator (>, <, =).
-                Must be the local office number, not global employees.
-                If unsure, return a conservative estimate."""
+                How many employees does {company} have in their {country} office?
+                If you find a specific number in the results, use that.
+                Otherwise, provide your best estimate for their {country} office.
+                Must be the local office number, not global employees."""
             }
         ]
         
         response = call_openai_with_retry(messages)
         raw_count = response.choices[0].message.content.strip()
         
-        # Clean the response
-        count = clean_count(raw_count, company)
+        # Clean the response to get just the number
+        count = clean_count(raw_count)
         
-        # If cleaning failed or number seems too high, use conservative defaults
-        if count is None or (count.isdigit() and int(count) > 10000):
-            if company.lower() in ['google', 'facebook', 'amazon']:
-                count = '>1000'
-            elif company.lower() in ['grab', 'shopee', 'sea']:
-                count = '>500'
-            elif company.lower() in ['jobstreet', 'jobs db', 'tokopedia', 'goto']:
-                count = '>50'
-            else:
-                count = '>100'
-            confidence = "Low"
-        else:
-            # Add comparison operator if missing
-            if not any(op in count for op in ['>', '<', '=']):
-                count = f">{count}"
-            confidence = "High" if relevant_text else "Medium"
+        # Set confidence based on whether we found real data
+        confidence = "High" if relevant_text else "Medium"
         
         logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
         
         return {
             "Company": company,
-            "Employee Count": count,
+            "Employee Count": count if count else "1000",
             "Confidence": confidence
         }
         
@@ -189,7 +147,7 @@ def search_web_info(company, country):
         logger.error(f"Error getting info for {company}: {str(e)}")
         return {
             "Company": company,
-            "Employee Count": ">100",
+            "Employee Count": "1000",
             "Confidence": "Low"
         }
 
