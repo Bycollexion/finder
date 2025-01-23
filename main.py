@@ -84,22 +84,22 @@ def search_web_info(company, country):
 
         country_name = get_country_name(country)
 
-        # Add context to the prompt
+        # Use detailed prompts
         messages = [
             {
                 "role": "system",
-                "content": "You are an AI specialized in retrieving corporate data, including employee counts for specific companies in given countries. Use the most reliable sources available."
+                "content": "You are an AI with access to a vast database of corporate information. Provide the most accurate and recent employee count for companies based on available data."
             },
             {
                 "role": "user",
-                "content": f"What is the employee count of {company} in {country_name}? Provide the number based on the latest available data."
+                "content": f"Using your database, determine the employee count of {company} in {country_name}. Focus on the most recent data available."
             }
         ]
 
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=messages,
-            temperature=0.1,
+            temperature=0.3,
             max_tokens=50
         )
 
@@ -110,18 +110,18 @@ def search_web_info(company, country):
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an AI that verifies the accuracy of employee counts. Confirm the reliability of the data."
+                    "content": "You are an AI that verifies the accuracy of employee counts using database knowledge. Confirm the reliability of the data."
                 },
                 {
                     "role": "user",
-                    "content": f"Is the employee count of {company} in {country_name} approximately {count}? Answer YES if confident, NO if unsure, UNKNOWN if no data available."
+                    "content": f"Is the employee count for {company} in {country_name} approximately {count}? Answer YES if confident, NO if unsure, UNKNOWN if no data available."
                 }
             ]
 
             response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=messages,
-                temperature=0.1,
+                temperature=0.3,
                 max_tokens=50
             )
 
@@ -138,7 +138,7 @@ def search_web_info(company, country):
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an AI that estimates employee counts using available data sources. Return only a number."
+                    "content": "You are an AI that estimates employee counts using all available data sources. Return only a number."
                 },
                 {
                     "role": "user",
@@ -149,7 +149,7 @@ def search_web_info(company, country):
             response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=messages,
-                temperature=0.1,
+                temperature=0.3,
                 max_tokens=50
             )
 
