@@ -487,146 +487,98 @@ def call_openai_with_retry(messages, functions=None, function_call=None):
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
+    """Process uploaded file"""
     if request.method == 'OPTIONS':
-        return '', 204
-        
+        return jsonify({}), 204
+
     try:
-        if 'file' not in request.files:
+        # Get file from request
+        file = request.files.get('file')
+        if not file:
             return jsonify({"error": "No file provided"}), 400
-            
-        file = request.files['file']
-        country = request.form.get('country')
-        
-        if not file or not country:
-            return jsonify({"error": "Both file and country are required"}), 400
-            
-        # Read the CSV file
+
+        # Read CSV content
         content = file.read().decode('utf-8')
-        csv_input = StringIO(content)
-        reader = csv.DictReader(csv_input)
+        csv_data = list(csv.reader(StringIO(content)))
         
-        # Find company column
-        possible_names = ['company', 'company name', 'companyname', 'name']
-        company_column = None
-        for header in reader.fieldnames:
-            cleaned_header = header.replace('\ufeff', '').strip().lower()
-            if cleaned_header in possible_names:
-                company_column = header
-                break
-                
-        if not company_column:
-            return jsonify({"error": "CSV file must have a column named 'Company'"}), 400
-            
-        # Read all companies
-        companies = [row[company_column].strip() for row in reader if row[company_column].strip()]
-        total_companies = len(companies)
-        
+        if len(csv_data) < 2:  # Header + at least one row
+            return jsonify({"error": "File is empty or invalid"}), 400
+
+        # Get country from request
+        country = request.form.get('country')
+        if not country:
+            return jsonify({"error": "No country specified"}), 400
+
+        # Extract company names (skip header)
+        companies = [row[0].strip() for row in csv_data[1:] if row and row[0].strip()]
         if not companies:
-            return jsonify({"error": "No companies found in CSV"}), 400
-            
-        # Create batch ID
+            return jsonify({"error": "No valid company names found"}), 400
+
+        # Generate batch ID
         batch_id = str(uuid.uuid4())
-        
+
+        # Store total count in Redis
         if using_redis:
-            # Use Redis and RQ for processing in production
-            batch_size = 50  # Process 50 companies per batch
-            num_batches = math.ceil(total_companies / batch_size)
-            
-            redis_client.hset(f"batch:{batch_id}",
-                mapping={
-                    "total": total_companies,
-                    "processed": 0,
-                    "status": "processing",
-                    "start_time": datetime.utcnow().isoformat(),
-                    "country": country
-                }
-            )
-            
-            # Split into batches and queue jobs
-            jobs = []
-            for i in range(0, total_companies, batch_size):
-                batch = companies[i:i + batch_size]
-                job = queue.enqueue(
-                    process_company_batch,
-                    args=(batch, country, batch_id),
-                    job_timeout='1h'
-                )
-                jobs.append(job.id)
-                
-            redis_client.hset(f"batch:{batch_id}", "jobs", json.dumps(jobs))
-            
-            return jsonify({
-                "message": "Processing started",
-                "batch_id": batch_id,
-                "total_companies": total_companies,
-                "num_batches": num_batches
-            })
-        else:
-            # Process synchronously in development
-            try:
-                # Process all companies in one batch
-                results = process_company_batch(companies, country, batch_id)
-                
-                # Create CSV file in memory
-                string_output = StringIO()
-                writer = csv.writer(string_output)
-                writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Explanation', 'Was Adjusted', 'Error'])
-                
-                for result in results:
-                    if 'error' in result:
-                        writer.writerow([result['company'], '', '', '', '', '', result['error']])
-                    else:
-                        writer.writerow([
-                            result['company'],
-                            result.get('employee_count', ''),
-                            result.get('confidence', ''),
-                            result.get('sources', ''),
-                            result.get('explanation', ''),
-                            'Yes' if result.get('was_adjusted', False) else 'No',
-                            ''
-                        ])
-                
-                # Convert to bytes for file download
-                bytes_output = BytesIO()
-                bytes_output.write(string_output.getvalue().encode('utf-8'))
-                bytes_output.seek(0)
-                
-                return send_file(
-                    bytes_output,
-                    mimetype='text/csv',
-                    as_attachment=True,
-                    download_name=f'results_{batch_id}.csv'
-                )
-                
-            except Exception as e:
-                print(f"Error processing file: {str(e)}")
-                return jsonify({"error": str(e)}), 500
-            
+            redis_client.hset(f"batch:{batch_id}", "total", len(companies))
+            redis_client.hset(f"batch:{batch_id}", "processed", 0)
+            redis_client.hset(f"batch:{batch_id}", "status", "processing")
+
+        # Process companies
+        results = process_company_batch(companies, country, batch_id)
+        
+        # Create CSV from results
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Status', 'Error/Explanation'])
+        
+        # Write results
+        for result in results:
+            writer.writerow([
+                result.get('company', ''),
+                result.get('employee_count', ''),
+                result.get('confidence', ''),
+                result.get('sources', ''),
+                result.get('status', 'error'),
+                result.get('error', result.get('explanation', ''))
+            ])
+        
+        # Create response with file download
+        output.seek(0)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        return send_file(
+            BytesIO(output.getvalue().encode('utf-8')),
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=f'employee_counts_{timestamp}.csv'
+        )
+
     except Exception as e:
-        print(f"Error in process_file: {str(e)}")
+        print(f"Error processing file: {str(e)}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/status/<batch_id>', methods=['GET'])
 def get_status(batch_id):
     """Get the status of a batch processing job"""
     try:
-        batch_data = redis_client.hgetall(f"batch:{batch_id}")
-        if not batch_data:
+        if not using_redis:
+            return jsonify({"error": "Status tracking not available"}), 400
+
+        status = redis_client.hget(f"batch:{batch_id}", "status")
+        if not status:
             return jsonify({"error": "Batch not found"}), 404
-            
-        total = int(batch_data.get('total', 0))
-        processed = int(batch_data.get('processed', 0))
-        progress = (processed / total * 100) if total > 0 else 0
+
+        total = int(redis_client.hget(f"batch:{batch_id}", "total") or 0)
+        processed = int(redis_client.hget(f"batch:{batch_id}", "processed") or 0)
         
         return jsonify({
-            "batch_id": batch_id,
-            "status": batch_data.get('status', 'unknown'),
+            "status": status,
             "total": total,
             "processed": processed,
-            "progress": round(progress, 2),
-            "start_time": batch_data.get('start_time')
+            "progress": (processed / total * 100) if total > 0 else 0
         })
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -634,19 +586,41 @@ def get_status(batch_id):
 def get_results(batch_id):
     """Get the results of a completed batch"""
     try:
-        batch_data = redis_client.hgetall(f"batch:{batch_id}")
-        if not batch_data:
-            return jsonify({"error": "Batch not found"}), 404
-            
-        if batch_data.get('status') != 'completed':
-            return jsonify({"error": "Batch processing not completed"}), 400
-            
+        if not using_redis:
+            return jsonify({"error": "Results not available"}), 400
+
         results = redis_client.get(f"results:{batch_id}")
         if not results:
             return jsonify({"error": "Results not found"}), 404
-            
-        return jsonify(json.loads(results))
+
+        # Create CSV from results
+        results = json.loads(results)
+        output = StringIO()
+        writer = csv.writer(output)
         
+        # Write header
+        writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Status', 'Error/Explanation'])
+        
+        # Write results
+        for result in results:
+            writer.writerow([
+                result.get('company', ''),
+                result.get('employee_count', ''),
+                result.get('confidence', ''),
+                result.get('sources', ''),
+                result.get('status', 'error'),
+                result.get('error', result.get('explanation', ''))
+            ])
+        
+        # Create response with file download
+        output.seek(0)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        return send_file(
+            BytesIO(output.getvalue().encode('utf-8')),
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=f'employee_counts_{timestamp}.csv'
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
