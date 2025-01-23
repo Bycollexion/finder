@@ -6,6 +6,7 @@ import csv
 import openai
 import time
 import random
+import traceback
 from io import StringIO
 from datetime import datetime
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -13,7 +14,19 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # Flask app initialization
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Configure CORS
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "http://localhost:3000",
+            "https://finder-git-main-bycollexions-projects.vercel.app",
+            "https://finder-bycollexions-projects.vercel.app"
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # Basic error handlers
 @app.errorhandler(404)
@@ -55,21 +68,15 @@ def handle_preflight():
 def after_request(response):
     """Add CORS headers to all responses"""
     origin = request.headers.get('Origin')
-    
-    if origin:
-        # List of allowed origins
-        allowed_origins = [
-            'http://localhost:3000',
-            'https://finder-git-main-bycollexions-projects.vercel.app',
-            'https://finder-bycollexions-projects.vercel.app'
-        ]
-        
-        if origin in allowed_origins:
-            response.headers['Access-Control-Allow-Origin'] = origin
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-            response.headers['Access-Control-Max-Age'] = '3600'
-    
+    if origin in [
+        'http://localhost:3000',
+        'https://finder-git-main-bycollexions-projects.vercel.app',
+        'https://finder-bycollexions-projects.vercel.app'
+    ]:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Max-Age'] = '3600'
     return response
 
 # API Endpoints
@@ -81,15 +88,10 @@ def health_check():
 @app.route('/api/countries', methods=['GET', 'OPTIONS'])
 def get_countries():
     """Get list of supported countries"""
+    if request.method == 'OPTIONS':
+        return handle_preflight()
+
     try:
-        print(f"Countries request received. Method: {request.method}")
-        print(f"Headers: {dict(request.headers)}")
-        print(f"Origin: {clean_header(request.headers.get('Origin'))}")
-
-        if request.method == 'OPTIONS':
-            return handle_preflight()
-
-        print("Getting countries list")
         countries = [
             {"id": "sg", "name": "Singapore"},
             {"id": "my", "name": "Malaysia"},
@@ -105,20 +107,15 @@ def get_countries():
             {"id": "au", "name": "Australia"}
         ]
         
-        print(f"Returning {len(countries)} countries")
-        
-        # Create response with CORS headers
-        response = make_response(jsonify(countries))
-        return response
+        return jsonify(countries)
 
     except Exception as e:
         print(f"Error getting countries: {str(e)}")
         traceback.print_exc()
-        error_response = make_response(jsonify({
+        return jsonify({
             "error": "Failed to get countries",
             "details": str(e)
-        }))
-        return error_response, 500
+        }), 500
 
 # Helper functions
 def search_web_info(company, country):
