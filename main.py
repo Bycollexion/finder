@@ -451,113 +451,124 @@ def get_countries():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@retry(
-    retry=retry_if_exception_type((RateLimitError, APIError)),
-    wait=wait_exponential(multiplier=1, min=4, max=10),  # Shorter max wait to avoid worker timeout
-    stop=stop_after_attempt(3)  # Fewer attempts
-)
-def call_openai_with_retry(messages, functions=None, function_call=None):
-    """Make OpenAI API call with retry logic"""
-    try:
-        if functions:
-            return openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=messages,
-                functions=functions,
-                function_call=function_call,
-                request_timeout=30  # 30 second timeout
-            )
-        return openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=messages,
-            request_timeout=30  # 30 second timeout
-        )
-    except RateLimitError as e:
-        print(f"Rate limit error: {str(e)}")
-        print("Rate limit reached. Waiting before retry...")
-        raise  # Let retry handle it
-    except APIError as e:
-        print(f"API error: {str(e)}")
-        print("API error occurred. Waiting before retry...")
-        raise  # Let retry handle it
-    except Exception as e:
-        if "quota" in str(e).lower():
-            raise RateLimitError("Quota exceeded")
-        raise
-
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
     """Process uploaded file"""
     if request.method == 'OPTIONS':
-        return jsonify({}), 204
+        return handle_preflight()
 
     try:
-        # Get file from request
-        file = request.files.get('file')
-        if not file:
-            return jsonify({"error": "No file provided"}), 400
-
-        # Read CSV content
-        content = file.read().decode('utf-8')
-        csv_data = list(csv.reader(StringIO(content)))
+        print("Starting file processing...")
         
-        if len(csv_data) < 2:  # Header + at least one row
-            return jsonify({"error": "File is empty or invalid"}), 400
+        # Get file from request
+        if 'file' not in request.files:
+            print("No file in request.files")
+            return jsonify({"error": "No file provided"}), 400
+            
+        file = request.files['file']
+        if not file:
+            print("File object is empty")
+            return jsonify({"error": "Empty file provided"}), 400
 
         # Get country from request
         country = request.form.get('country')
         if not country:
+            print("No country specified")
             return jsonify({"error": "No country specified"}), 400
 
-        # Extract company names (skip header)
-        companies = [row[0].strip() for row in csv_data[1:] if row and row[0].strip()]
-        if not companies:
-            return jsonify({"error": "No valid company names found"}), 400
+        print(f"Processing file for country: {country}")
 
-        # Generate batch ID
-        batch_id = str(uuid.uuid4())
+        try:
+            # Read CSV content with explicit encoding
+            content = file.read()
+            if not content:
+                print("File content is empty")
+                return jsonify({"error": "Empty file content"}), 400
+                
+            try:
+                content = content.decode('utf-8')
+            except UnicodeDecodeError:
+                print("Trying alternative encoding...")
+                content = content.decode('utf-8-sig')  # Try with BOM
+                
+            print(f"Successfully read file content, length: {len(content)}")
+            
+            # Parse CSV data
+            csv_data = list(csv.reader(StringIO(content)))
+            if len(csv_data) < 2:
+                print("CSV has less than 2 rows")
+                return jsonify({"error": "File is empty or invalid"}), 400
 
-        # Store total count in Redis
-        if using_redis:
-            redis_client.hset(f"batch:{batch_id}", "total", len(companies))
-            redis_client.hset(f"batch:{batch_id}", "processed", 0)
-            redis_client.hset(f"batch:{batch_id}", "status", "processing")
+            # Extract company names (skip header)
+            companies = [row[0].strip() for row in csv_data[1:] if row and row[0].strip()]
+            print(f"Found {len(companies)} companies")
+            
+            if not companies:
+                return jsonify({"error": "No valid company names found"}), 400
 
-        # Process companies
-        results = process_company_batch(companies, country, batch_id)
-        
-        # Create CSV from results
-        output = StringIO()
-        writer = csv.writer(output)
-        
-        # Write header
-        writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Status', 'Error/Explanation'])
-        
-        # Write results
-        for result in results:
-            writer.writerow([
-                result.get('company', ''),
-                result.get('employee_count', ''),
-                result.get('confidence', ''),
-                result.get('sources', ''),
-                result.get('status', 'error'),
-                result.get('error', result.get('explanation', ''))
-            ])
-        
-        # Create response with file download
-        output.seek(0)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        return send_file(
-            BytesIO(output.getvalue().encode('utf-8')),
-            mimetype='text/csv',
-            as_attachment=True,
-            download_name=f'employee_counts_{timestamp}.csv'
-        )
+            # Process in smaller batches to avoid timeouts
+            batch_size = 5
+            all_results = []
+            
+            print(f"Processing companies in batches of {batch_size}")
+            for i in range(0, len(companies), batch_size):
+                batch = companies[i:i + batch_size]
+                print(f"Processing batch {i//batch_size + 1}/{(len(companies) + batch_size - 1)//batch_size}")
+                try:
+                    results = process_company_batch(batch, country, None)
+                    all_results.extend(results)
+                except Exception as e:
+                    print(f"Error processing batch: {str(e)}")
+                    traceback.print_exc()
+                    # Continue with next batch
+                    all_results.extend([{
+                        'company': company,
+                        'status': 'error',
+                        'error': f"Failed to process: {str(e)}"
+                    } for company in batch])
 
+            print("Creating output CSV...")
+            # Create CSV from results
+            output = StringIO()
+            writer = csv.writer(output)
+            
+            # Write header
+            writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Status', 'Error/Explanation'])
+            
+            # Write results
+            for result in all_results:
+                writer.writerow([
+                    result.get('company', ''),
+                    result.get('employee_count', ''),
+                    result.get('confidence', ''),
+                    result.get('sources', ''),
+                    result.get('status', 'error'),
+                    result.get('error', result.get('explanation', ''))
+                ])
+            
+            print("Preparing file download...")
+            # Create response with file download
+            output.seek(0)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            return send_file(
+                BytesIO(output.getvalue().encode('utf-8')),
+                mimetype='text/csv',
+                as_attachment=True,
+                download_name=f'employee_counts_{timestamp}.csv'
+            )
+
+        except csv.Error as e:
+            print(f"CSV parsing error: {str(e)}")
+            return jsonify({"error": f"Invalid CSV format: {str(e)}"}), 400
+            
     except Exception as e:
         print(f"Error processing file: {str(e)}")
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": "Failed to process file",
+            "details": str(e),
+            "type": "network_error" if "Network" in str(e) else "processing_error"
+        }), 500
 
 @app.route('/api/status/<batch_id>', methods=['GET'])
 def get_status(batch_id):
@@ -685,6 +696,40 @@ def get_employee_count():
         response = make_response(jsonify({"error": str(e)}), 500)
         response.headers['Content-Type'] = 'application/json'
         return response
+
+@retry(
+    retry=retry_if_exception_type((RateLimitError, APIError)),
+    wait=wait_exponential(multiplier=1, min=4, max=10),  # Shorter max wait to avoid worker timeout
+    stop=stop_after_attempt(3)  # Fewer attempts
+)
+def call_openai_with_retry(messages, functions=None, function_call=None):
+    """Make OpenAI API call with retry logic"""
+    try:
+        if functions:
+            return openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=messages,
+                functions=functions,
+                function_call=function_call,
+                request_timeout=30  # 30 second timeout
+            )
+        return openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=messages,
+            request_timeout=30  # 30 second timeout
+        )
+    except RateLimitError as e:
+        print(f"Rate limit error: {str(e)}")
+        print("Rate limit reached. Waiting before retry...")
+        raise  # Let retry handle it
+    except APIError as e:
+        print(f"API error: {str(e)}")
+        print("API error occurred. Waiting before retry...")
+        raise  # Let retry handle it
+    except Exception as e:
+        if "quota" in str(e).lower():
+            raise RateLimitError("Quota exceeded")
+        raise
 
 # Configure Redis connection
 redis_url = os.getenv('REDIS_URL', os.getenv('REDISCLOUD_URL'))  # Try both Railway and Redis Cloud URLs
