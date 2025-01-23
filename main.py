@@ -88,64 +88,49 @@ def search_web_info(company, country):
         messages = [
             {
                 "role": "system",
-                "content": f"""You are querying multiple databases to find employee counts and office information for {company} in {country_name}.
-                
-                CHECK THESE SOURCES IN ORDER:
-                1. LinkedIn Company Data:
-                   - Employee count in {country_name}
-                   - Office locations
-                   - Current job openings
-                
-                2. Company Annual Reports:
-                   - Regional headcount for {country_name}/Southeast Asia
-                   - Office expansions
-                   - Investment in {country_name}
-                
-                3. Government Data:
-                   - Business registration in {country_name}
-                   - Employment passes
-                   - Tax filings
-                
-                4. Commercial Real Estate:
-                   - Office leases in {country_name}
-                   - Square footage
-                   - Recent moves
-                
-                5. News and Press:
-                   - Hiring announcements in {country_name}
-                   - Office openings
-                   - Layoff reports
-                
-                FORMAT YOUR RESPONSE:
-                
-                OFFICE STATUS:
-                □ Confirmed presence in {country_name}
-                □ No presence found
-                □ Status unclear
-                
-                PRIMARY OFFICE:
-                - Address: [Full address in {country_name}]
-                - Type: [HQ/Regional/Sales/R&D]
-                - Size: [Square feet/floors]
-                
-                EMPLOYEE DATA:
-                - Latest Count: [Number] as of [Date]
-                - YoY Change: [+/-]%
-                - Source: [LinkedIn/Annual Report/News]
-                
-                HIRING STATUS:
-                - Active Roles: [Number in {country_name}]
-                - Key Departments: [List]
-                - Growth Trend: [Expanding/Stable/Reducing]
-                
-                NOTES:
-                - [Any important context about {country_name} operations]
-                
-                BE SPECIFIC: Report only real data you find. If you can't find something, mark it as "No data" rather than making assumptions."""
+                "content": f"""You are the CompanyDataAPI, a corporate intelligence database. You have been queried for information about {company}'s presence in {country_name}.
+
+AVAILABLE ENDPOINTS:
+/api/v1/office_presence
+/api/v1/employee_data
+/api/v1/real_estate
+/api/v1/hiring_status
+
+RESPONSE FORMAT:
+{{
+    "query_timestamp": "2025-01-23",
+    "company": "{company}",
+    "region": "{country_name}",
+    "office_presence": {{
+        "status": "ACTIVE|NONE|UNKNOWN",
+        "primary_location": {{
+            "address": "string",
+            "type": "HQ|REGIONAL|SALES|R&D",
+            "size_sqft": number,
+            "lease_status": "OWNED|LEASED|UNKNOWN"
+        }}
+    }},
+    "employee_data": {{
+        "headcount": {{
+            "current": number,
+            "last_updated": "YYYY-MM-DD",
+            "yoy_change_pct": number
+        }},
+        "data_source": "LINKEDIN|ANNUAL_REPORT|NEWS|ESTIMATE"
+    }},
+    "hiring_status": {{
+        "active_roles": number,
+        "key_departments": ["string"],
+        "trend": "EXPANDING|STABLE|REDUCING"
+    }},
+    "confidence_score": number // 0.0-1.0
+}}
+
+Return a complete JSON response with real numbers and data. Do not return instructions or placeholders. If data is unknown, use null."""
             },
             {
                 "role": "user",
-                "content": f"Query all data sources and report the current status of {company}'s presence in {country_name}."
+                "content": f"GET /api/v1/company_data?name={company}&region={country_name}"
             }
         ]
 
@@ -163,36 +148,35 @@ def search_web_info(company, country):
         messages = [
             {
                 "role": "system",
-                "content": f"""You are calculating the most accurate employee count for {company} in {country_name}.
-                
-                CALCULATION RULES:
-                1. If "Latest Count" exists with a date within 2 years:
-                   - Use that number directly
-                
-                2. If office size is known:
-                   - Use 150 sq ft per employee for tech companies
-                   - Use 100 sq ft per employee for others
-                   - Round to nearest 50
-                
-                3. If only job openings known:
-                   - Multiply active roles by 15 (assuming 6-7% hiring rate)
-                   - Round to nearest 50
-                
-                4. If office type is known but no other data:
-                   - HQ: 1000-2000 employees
-                   - Regional: 200-500 employees
-                   - Sales: 50-100 employees
-                   - R&D: 100-300 employees
-                   Use midpoint of range
-                
-                5. If no office confirmed:
-                   Return 0
-                
-                Return ONLY the final number."""
+                "content": f"""You are the HeadcountAnalyzer API. Extract the most accurate employee count from the CompanyDataAPI response.
+
+CALCULATION RULES:
+1. If headcount.current exists and last_updated is within 2 years:
+   RETURN headcount.current
+
+2. If office_presence.primary_location.size_sqft exists:
+   - Tech companies: size_sqft / 150 (rounded to nearest 50)
+   - Others: size_sqft / 100 (rounded to nearest 50)
+   RETURN calculated_headcount
+
+3. If hiring_status.active_roles exists:
+   RETURN active_roles * 15 (rounded to nearest 50)
+
+4. If only office_presence.primary_location.type exists:
+   - HQ: 1500
+   - REGIONAL: 350
+   - SALES: 75
+   - R&D: 200
+   RETURN type_based_estimate
+
+5. If office_presence.status != "ACTIVE":
+   RETURN 0
+
+Return ONLY the final number, no explanation."""
             },
             {
                 "role": "user",
-                "content": f"Calculate the most accurate employee count from this data:\n{web_data}"
+                "content": f"Calculate headcount from API response:\n{web_data}"
             }
         ]
 
@@ -204,7 +188,14 @@ def search_web_info(company, country):
         )
 
         count = extract_number(response.choices[0].message['content'])
-        confidence = "High" if "Latest Count:" in web_data and "Source:" in web_data else "Low"
+        
+        # Check if the response had a high confidence score
+        try:
+            import json
+            data = json.loads(web_data)
+            confidence = "High" if data.get("confidence_score", 0) > 0.7 else "Low"
+        except:
+            confidence = "Low"
         
         if not count or count == "0":
             logger.info(f"No presence found for {company} in {country_name}")
