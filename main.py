@@ -23,32 +23,66 @@ import math
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
 
-# Configure CORS to allow all origins
-CORS(app, resources={
-    r"/*": {
-        "origins": ["https://finder-git-main-bycollexions-projects.vercel.app", "http://localhost:3000", "http://localhost:5173"],
-        "methods": ["GET", "POST", "OPTIONS", "PUT", "DELETE"],
-        "allow_headers": ["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
-        "expose_headers": ["Content-Type"],
-        "supports_credentials": True
-    }
-})
-
-def handle_preflight():
-    """Handle CORS preflight request"""
-    response = jsonify({})
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
-    response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-    return response, 204
+def clean_header(header):
+    """Clean header value by removing trailing semicolons and whitespace"""
+    if not header:
+        return header
+    return header.rstrip(';').strip()
 
 @app.after_request
 def after_request(response):
     """Add CORS headers to all responses"""
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    origin = clean_header(request.headers.get('Origin'))
+    print(f"Request origin: {origin}")
+    
+    # Always allow the Vercel frontend and localhost
+    allowed_origins = [
+        'https://finder-git-main-bycollexions-projects.vercel.app',
+        'http://localhost:3000',
+        'http://localhost:5173'
+    ]
+    
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    else:
+        print(f"Warning: Unknown origin {origin}")
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        
+    response.headers.update({
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Max-Age': '3600',
+        'Vary': 'Origin'
+    })
     return response
+
+def handle_preflight():
+    """Handle CORS preflight request"""
+    response = make_response()
+    origin = clean_header(request.headers.get('Origin'))
+    
+    # Always allow the Vercel frontend and localhost
+    allowed_origins = [
+        'https://finder-git-main-bycollexions-projects.vercel.app',
+        'http://localhost:3000',
+        'http://localhost:5173'
+    ]
+    
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    else:
+        print(f"Warning: Unknown origin {origin}")
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        
+    response.headers.update({
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Max-Age': '3600',
+        'Vary': 'Origin'
+    })
+    return response, 204
 
 def search_web_info(company, country):
     """Search web for company information"""
@@ -391,15 +425,10 @@ def get_countries():
     try:
         print(f"Countries request received. Method: {request.method}")
         print(f"Headers: {dict(request.headers)}")
+        print(f"Origin: {clean_header(request.headers.get('Origin'))}")
 
         if request.method == 'OPTIONS':
-            response = make_response()
-            response.headers.update({
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type'
-            })
-            return response, 204
+            return handle_preflight()
 
         print("Getting countries list")
         countries = [
@@ -421,15 +450,6 @@ def get_countries():
         
         # Create response with CORS headers
         response = make_response(jsonify(countries))
-        response.headers.update({
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type',
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-        })
         return response
 
     except Exception as e:
@@ -439,12 +459,6 @@ def get_countries():
             "error": "Failed to get countries",
             "details": str(e)
         }))
-        error_response.headers.update({
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type',
-            'Content-Type': 'application/json'
-        })
         return error_response, 500
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
