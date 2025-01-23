@@ -6,7 +6,7 @@
   "installCommand": "cd frontend && npm install",
   "functions": {
     "api/*.py": {
-      "runtime": "python3.9"
+      "runtime": "@vercel/python@3.1.0"
     }
   },
   "routes": [
