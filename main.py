@@ -3,7 +3,7 @@ from flask_cors import CORS
 import os
 import json
 import csv
-from io import StringIO, BytesIO
+from io import StringIO, BytesIO, TextIOWrapper
 import openai
 import traceback
 import requests
@@ -474,8 +474,9 @@ def process_file():
 
             print("Creating output CSV...")
             # Create CSV from results
-            output = BytesIO()  # Use BytesIO instead of StringIO
-            writer = csv.writer(output)
+            output = BytesIO()
+            text_output = TextIOWrapper(output, encoding='utf-8', write_through=True)
+            writer = csv.writer(text_output)
             
             # Write header
             writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Status', 'Error/Explanation'])
