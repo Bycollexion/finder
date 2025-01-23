@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime
 import math
 from googleapiclient.discovery import build
+import re
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
@@ -159,25 +160,29 @@ def search_google_custom(company_name, country):
             print("Google API key or Search Engine ID not found")
             return []
 
-        # Create search queries
+        # Create more specific search queries
         queries = [
-            # LinkedIn data (primary source)
-            f'"{company_name}" "{country}" employees site:linkedin.com/company',
-            f'"{company_name}" "{country}" "number of employees" site:linkedin.com/company',
-            f'"{company_name}" "{country}" "team size" site:linkedin.com/company',
+            # LinkedIn data with more specific terms
+            f'"{company_name}" "{country}" "employees" "office" site:linkedin.com/company',
+            f'"{company_name}" "{country}" "team size" "headquarters" site:linkedin.com/company',
+            f'"{company_name}" "{country}" "number of employees" "office" site:linkedin.com/company',
             
-            # Career pages and job postings
-            f'"{company_name}" "{country}" careers "join our team"',
-            f'"{company_name}" "{country}" "current openings" "team size"',
-            f'"{company_name}" "{country}" "team of" site:linkedin.com/jobs',
+            # Career and job pages with specific employee count mentions
+            f'"{company_name}" "{country}" "join our team of" "employees"',
+            f'"{company_name}" "{country}" "current team size" "office"',
+            f'"{company_name}" "{country}" "growing team of" site:linkedin.com/jobs',
             
-            # Official sources
-            f'"{company_name}" "{country}" office employees',
-            f'"{company_name}" "{country}" headquarters staff',
+            # News and press releases about office size
+            f'"{company_name}" "{country}" "office expansion" "employees"',
+            f'"{company_name}" "{country}" "new office" "team size"',
             
-            # Business directories
-            f'"{company_name}" "{country}" employees site:glassdoor.com',
-            f'"{company_name}" "{country}" size site:glassdoor.com'
+            # Glassdoor and other job sites
+            f'"{company_name}" "{country}" "company size" site:glassdoor.com',
+            f'"{company_name}" "{country}" "number of employees" site:glassdoor.com',
+            
+            # Additional sources
+            f'"{company_name}" "{country}" "corporate fact sheet" "employees"',
+            f'"{company_name}" "{country}" "annual report" "workforce"'
         ]
 
         # Initialize the Custom Search API service
@@ -186,23 +191,43 @@ def search_google_custom(company_name, country):
         all_results = []
         for query in queries:
             try:
-                # Execute the search
+                # Execute the search with more results per query
                 result = service.cse().list(
                     q=query,
-                    cx=search_id,  # Use the environment variable
-                    num=10  # Number of results per query
+                    cx=search_id,
+                    num=10,  # Maximum results per query
+                    dateRestrict='y1'  # Restrict to last year for more recent data
                 ).execute()
 
-                # Extract and store relevant information
+                # Extract and store relevant information with better filtering
                 if 'items' in result:
                     for item in result['items']:
-                        result_data = {
-                            'title': item.get('title', ''),
-                            'snippet': item.get('snippet', ''),
-                            'link': item.get('link', ''),
-                            'source': 'linkedin.com' if 'linkedin.com' in item.get('link', '') else 'other'
-                        }
-                        all_results.append(result_data)
+                        # Skip results that don't look relevant
+                        snippet = item.get('snippet', '').lower()
+                        title = item.get('title', '').lower()
+                        
+                        # Look for number patterns in the text
+                        number_patterns = [
+                            r'(\d+,?\d*)\s*(?:employees|staff|team members|people)',
+                            r'team\s+of\s+(\d+,?\d*)',
+                            r'workforce\s+of\s+(\d+,?\d*)',
+                            r'(\d+,?\d*)\s*-?\s*person\s+team'
+                        ]
+                        
+                        has_number = any(re.search(pattern, snippet) or re.search(pattern, title) 
+                                       for pattern in number_patterns)
+                        
+                        # Only include results that might have employee counts
+                        if has_number or 'employees' in snippet or 'team size' in snippet:
+                            result_data = {
+                                'title': item.get('title', ''),
+                                'snippet': item.get('snippet', ''),
+                                'link': item.get('link', ''),
+                                'source': 'linkedin' if 'linkedin.com' in item.get('link', '') 
+                                         else 'glassdoor' if 'glassdoor.com' in item.get('link', '')
+                                         else 'other'
+                            }
+                            all_results.append(result_data)
 
             except Exception as e:
                 print(f"Error searching for query '{query}': {str(e)}")
@@ -880,25 +905,62 @@ except redis.ConnectionError as e:
 def analyze_search_results(company, country, search_results):
     """Analyze search results using GPT-4"""
     try:
-        # Organize results by source
+        # Skip if no results
+        if not search_results:
+            return None
+
+        # Organize results by source with better categorization
         organized_results = {
             "linkedin_data": [],
             "official_statements": [],
             "job_postings": [],
+            "news_articles": [],
             "other_sources": []
         }
 
         for result in search_results:
-            if 'linkedin.com/company' in result['link']:
+            link = result['link'].lower()
+            if 'linkedin.com/company' in link:
                 organized_results['linkedin_data'].append(result)
-            elif 'linkedin.com/jobs' in result['link']:
+            elif 'linkedin.com/jobs' in link:
                 organized_results['job_postings'].append(result)
-            elif company.lower() in result['link'].lower():
+            elif any(x in link for x in ['/news/', 'press', 'media']):
+                organized_results['news_articles'].append(result)
+            elif company.lower() in link:
                 organized_results['official_statements'].append(result)
             else:
                 organized_results['other_sources'].append(result)
 
-        # Create GPT-4 prompt
+        # Extract potential employee counts from text
+        def extract_numbers(text):
+            numbers = []
+            # Look for patterns like "X employees", "team of X", etc.
+            patterns = [
+                r'(\d+,?\d*)\s*(?:employees|staff|team members|people)',
+                r'team\s+of\s+(\d+,?\d*)',
+                r'workforce\s+of\s+(\d+,?\d*)',
+                r'(\d+,?\d*)\s*-?\s*person\s+team'
+            ]
+            for pattern in patterns:
+                matches = re.finditer(pattern, text.lower())
+                for match in matches:
+                    try:
+                        num = int(match.group(1).replace(',', ''))
+                        if 10 <= num <= 100000:  # Reasonable range for office size
+                            numbers.append(num)
+                    except ValueError:
+                        continue
+            return numbers
+
+        # Extract numbers from all results
+        all_numbers = []
+        for category in organized_results.values():
+            for result in category:
+                numbers = extract_numbers(result['snippet']) + extract_numbers(result['title'])
+                if numbers:
+                    all_numbers.extend(numbers)
+
+        # Create enhanced prompt with extracted numbers
         prompt = f"""Analyze these search results to determine employee count for {company} in {country}.
 
 SEARCH RESULTS:
@@ -909,11 +971,16 @@ LinkedIn Company Data:
 Official Statements:
 {format_results(organized_results['official_statements'])}
 
+News Articles:
+{format_results(organized_results['news_articles'])}
+
 Job Postings:
 {format_results(organized_results['job_postings'])}
 
 Other Sources:
 {format_results(organized_results['other_sources'])}
+
+Extracted Employee Numbers: {', '.join(map(str, all_numbers)) if all_numbers else 'None found'}
 
 Focus on:
 1. Direct mentions of employee numbers
@@ -922,6 +989,11 @@ Focus on:
 4. Consistency across sources
 5. Context of numbers (global vs local)
 
+Additional Context:
+- Company Type: {'MNC' if company.lower() in ['google', 'meta', 'amazon'] else 'Regional' if company.lower() in ['grab', 'shopee', 'lazada'] else 'Local'}
+- Market: {country}
+- Historical Data Available: {'Yes' if all_numbers else 'No'}
+
 Provide:
 1. Most likely employee count
 2. Confidence level
@@ -929,7 +1001,7 @@ Provide:
 4. Key evidence
 5. Any conflicting data"""
 
-        # Call GPT-4 for analysis
+        # Call GPT-4 for analysis with enhanced prompt
         response = call_openai_with_retry(
             messages=[
                 {"role": "system", "content": """You are an expert data analyst specializing in workforce analytics.
@@ -942,7 +1014,13 @@ Provide:
                 4. Official sources over unofficial
                 5. Consistent patterns across sources
                 
-                Be conservative in estimates and clearly explain your reasoning."""},
+                Be conservative in estimates and clearly explain your reasoning.
+                
+                For well-known companies:
+                - Google typically has 1000-3000 employees in major Asian offices
+                - Facebook/Meta typically has 500-2000 employees in Asian offices
+                - Amazon typically has 1000-5000 employees in major Asian offices
+                - Regional tech companies like Grab, Shopee typically have 2000-5000 employees in their major markets"""},
                 {"role": "user", "content": prompt}
             ],
             functions=[{
