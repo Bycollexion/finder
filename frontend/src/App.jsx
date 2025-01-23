@@ -16,8 +16,8 @@ import {
 } from '@mui/material'
 import axios from 'axios'
 
-// Update API URL to use server IP
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+// Update API URL to use production URL in Vercel
+const API_URL = import.meta.env.PROD ? '' : import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
 // Configure axios
 const api = axios.create({
