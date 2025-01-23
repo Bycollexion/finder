@@ -453,8 +453,8 @@ def get_countries():
 
 @retry(
     retry=retry_if_exception_type((RateLimitError, APIError)),
-    wait=wait_exponential(multiplier=1, min=4, max=60),  # Wait between 4-60 seconds
-    stop=stop_after_attempt(5)  # Try 5 times
+    wait=wait_exponential(multiplier=1, min=4, max=10),  # Shorter max wait to avoid worker timeout
+    stop=stop_after_attempt(3)  # Fewer attempts
 )
 def call_openai_with_retry(messages, functions=None, function_call=None):
     """Make OpenAI API call with retry logic"""
@@ -464,11 +464,13 @@ def call_openai_with_retry(messages, functions=None, function_call=None):
                 model="gpt-4",
                 messages=messages,
                 functions=functions,
-                function_call=function_call
+                function_call=function_call,
+                request_timeout=30  # 30 second timeout
             )
         return openai.ChatCompletion.create(
             model="gpt-4",
-            messages=messages
+            messages=messages,
+            request_timeout=30  # 30 second timeout
         )
     except RateLimitError as e:
         print(f"Rate limit error: {str(e)}")
@@ -478,6 +480,10 @@ def call_openai_with_retry(messages, functions=None, function_call=None):
         print(f"API error: {str(e)}")
         print("API error occurred. Waiting before retry...")
         raise  # Let retry handle it
+    except Exception as e:
+        if "quota" in str(e).lower():
+            raise RateLimitError("Quota exceeded")
+        raise
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
@@ -707,37 +713,47 @@ def get_employee_count():
         return response
 
 # Configure Redis connection
-redis_host = os.getenv('REDIS_HOST', 'localhost')
-redis_port = int(os.getenv('REDIS_PORT', 6379))
-redis_password = os.getenv('REDIS_PASSWORD')
+redis_url = os.getenv('REDIS_URL')  # Railway provides REDIS_URL
 redis_client = None
 using_redis = False
 queue = None
 
 try:
-    # Try connecting to Redis with authentication if password is provided
-    if redis_password:
-        redis_client = redis.Redis(
-            host=redis_host,
-            port=redis_port,
-            password=redis_password,
+    if redis_url:
+        # Parse Redis URL for connection
+        redis_client = redis.from_url(
+            redis_url,
             decode_responses=True,
-            socket_timeout=5,  # 5 second timeout
+            socket_timeout=5,
             socket_connect_timeout=5
         )
     else:
-        # Connect without authentication for local development
-        redis_client = redis.Redis(
-            host=redis_host,
-            port=redis_port,
-            decode_responses=True,
-            socket_timeout=5,  # 5 second timeout
-            socket_connect_timeout=5
-        )
+        # Fallback for local development
+        redis_host = os.getenv('REDIS_HOST', 'localhost')
+        redis_port = int(os.getenv('REDIS_PORT', 6379))
+        redis_password = os.getenv('REDIS_PASSWORD')
+        
+        if redis_password:
+            redis_client = redis.Redis(
+                host=redis_host,
+                port=redis_port,
+                password=redis_password,
+                decode_responses=True,
+                socket_timeout=5,
+                socket_connect_timeout=5
+            )
+        else:
+            redis_client = redis.Redis(
+                host=redis_host,
+                port=redis_port,
+                decode_responses=True,
+                socket_timeout=5,
+                socket_connect_timeout=5
+            )
     
     # Test the connection
     redis_client.ping()
-    print(f"Successfully connected to Redis at {redis_host}:{redis_port}")
+    print(f"Successfully connected to Redis")
     using_redis = True
     # Configure RQ queue
     queue = Queue(connection=redis_client)
@@ -746,7 +762,7 @@ except (redis.ConnectionError, redis.TimeoutError) as e:
     # Fallback to using local memory if Redis is not available
     from fakeredis import FakeRedis
     redis_client = FakeRedis(decode_responses=True)
-    print("Using in-memory Redis mock for local development")
+    print("Using in-memory Redis mock for development")
     using_redis = False
     queue = None
 
