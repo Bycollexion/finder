@@ -71,48 +71,77 @@ def search_web_info(company, country):
         if company.lower() == 'company':
             return None
             
-        # Search queries focused on finding employee counts
-        search_queries = [
+        # First try direct employee count searches
+        primary_queries = [
             f"{company} {country} office employees",
             f"{company} {country} office size",
             f"{company} {country} staff count"
         ]
         
+        # Additional context searches
+        context_queries = [
+            f"{company} {country} site:linkedin.com",  # LinkedIn profiles
+            f"{company} {country} office expansion news",  # Recent office news
+            f"{company} {country} hiring 2024",  # Recent hiring info
+            f"{company} {country} headquarters",  # Office details
+        ]
+        
         relevant_text = ""
-        for query in search_queries:
+        
+        # Try primary queries first
+        for query in primary_queries:
             search_results = search_web({"query": query})
             if search_results:
                 for result in search_results:
                     try:
                         content = read_url_content({"Url": result["url"]})
-                        if content:
-                            # Only include text that mentions both company and country
-                            if company.lower() in content.lower() and country.lower() in content.lower():
-                                relevant_text += f"\nSource ({result['url']}):\n{content}\n"
+                        if content and company.lower() in content.lower() and country.lower() in content.lower():
+                            relevant_text += f"\nSource (Employee Count - {result['url']}):\n{content}\n"
                     except:
                         continue
         
-        # Ask OpenAI to analyze the results or make an estimate
+        # If no direct employee count found, try context queries
+        if not relevant_text:
+            for query in context_queries:
+                search_results = search_web({"query": query})
+                if search_results:
+                    for result in search_results:
+                        try:
+                            content = read_url_content({"Url": result["url"]})
+                            if content and company.lower() in content.lower() and country.lower() in content.lower():
+                                relevant_text += f"\nSource (Context - {result['url']}):\n{content}\n"
+                        except:
+                            continue
+        
+        # Ask OpenAI to analyze all the data
         messages = [
             {
                 "role": "system", 
-                "content": f"""You are an employee count bot that provides numbers for {country} offices.
-                If you find an exact number in the search results, use that.
-                If not, provide your best estimate based on:
-                - Company size in {country}
-                - Industry standards
-                - Office locations
+                "content": f"""You are an employee count estimator for {country} offices.
+                Analyze the provided data in this order:
+                1. Direct employee count mentions
+                2. LinkedIn data (employee profiles, job posts)
+                3. News about office size/expansion
+                4. Recent hiring information
+                
+                Use this data to provide either:
+                - Exact number if found in reliable sources
+                - Educated estimate based on:
+                  * LinkedIn profiles in {country}
+                  * Recent hiring posts
+                  * Office size/location
+                  * Industry standards in {country}
                 
                 Examples of good responses:
-                - 250 (if found in search results)
-                - 300 (estimated based on industry data)
+                - 250 (from direct source)
+                - 300 (estimated from LinkedIn + news)
                 
                 Bad responses (never do these):
                 - Global employee counts
                 - Ranges or approximate numbers
                 - Any explanation text
                 
-                Just return a single number."""
+                Just return a single number for the {country} office."""
             },
             {
                 "role": "user",
@@ -120,9 +149,9 @@ def search_web_info(company, country):
                 {relevant_text}
                 
                 How many employees does {company} have in their {country} office?
-                If you find a specific number in the results, use that.
-                Otherwise, provide your best estimate for their {country} office.
-                Must be the local office number, not global employees."""
+                If you find a specific number, use that.
+                Otherwise, estimate based on LinkedIn profiles, news, and hiring data.
+                Must be specific to {country}, not global numbers."""
             }
         ]
         
@@ -132,8 +161,13 @@ def search_web_info(company, country):
         # Clean the response to get just the number
         count = clean_count(raw_count)
         
-        # Set confidence based on whether we found real data
-        confidence = "High" if relevant_text else "Medium"
+        # Set confidence based on data source
+        if "Employee Count -" in relevant_text:
+            confidence = "High"  # Found direct employee count
+        elif relevant_text:
+            confidence = "Medium"  # Used LinkedIn/news data
+        else:
+            confidence = "Low"  # Pure estimate
         
         logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
         
