@@ -1,7 +1,7 @@
 import multiprocessing
 
 # Server socket
-bind = "0.0.0.0:5001"  # Allow external connections
+bind = "0.0.0.0:8080"  # Match Railway's port
 backlog = 2048
 
 # Worker processes - using sync workers for simplicity
@@ -12,7 +12,7 @@ timeout = 120
 # Logging
 accesslog = '-'
 errorlog = '-'
-loglevel = 'info'
+loglevel = 'debug'  # Increased log level for debugging
 
 # Process naming
 proc_name = 'finder'

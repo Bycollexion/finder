@@ -16,8 +16,20 @@ from openai.error import RateLimitError, APIError
 import random
 from datetime import datetime
 
+# Flask app initialization
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.wsgi_app = ProxyFix(app.wsgi_app)
+CORS(app)
+
+# Basic error handlers
+@app.errorhandler(404)
+def not_found_error(error):
+    return jsonify({"error": "Not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"error": "Internal server error"}), 500
 
 def clean_header(header):
     """Clean header value by removing trailing semicolons and whitespace"""
@@ -196,7 +208,18 @@ def process_file():
 @app.route('/')
 def health_check():
     """Basic health check endpoint"""
-    return jsonify({"status": "healthy"}), 200
+    try:
+        return jsonify({
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        app.logger.error(f"Health check failed: {str(e)}")
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 @app.route('/api/countries', methods=['GET', 'OPTIONS'])
 def get_countries():
