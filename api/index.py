@@ -1,7 +1,9 @@
+from http.server import BaseHTTPRequestHandler
+import json
 import os
 import logging
 import requests
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, jsonify
 from flask_cors import CORS
 import pandas as pd
 import openai
@@ -11,7 +13,6 @@ from datetime import datetime
 import time
 import random
 import traceback
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -19,41 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
-
-# Configure CORS
-CORS(app, resources={
-    r"/*": {
-        "origins": [
-            "http://localhost:3000",
-            "https://finder-git-main-bycollexions-projects.vercel.app",
-            "https://finder-bycollexions-projects.vercel.app",
-            "https://finder.bycollexion.com"
-        ],
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"],
-        "expose_headers": ["Content-Disposition"],
-        "supports_credentials": True,
-        "max_age": 3600
-    }
-})
-
-@app.after_request
-def after_request(response):
-    """Ensure CORS headers are set correctly"""
-    origin = request.headers.get('Origin')
-    if origin in [
-        "http://localhost:3000",
-        "https://finder-git-main-bycollexions-projects.vercel.app",
-        "https://finder-bycollexions-projects.vercel.app",
-        "https://finder.bycollexion.com"
-    ]:
-        response.headers['Access-Control-Allow-Origin'] = origin
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-    response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
-    response.headers['Access-Control-Allow-Credentials'] = 'true'
-    response.headers['Access-Control-Max-Age'] = '3600'
-    return response
+CORS(app)
 
 # Configure OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -267,20 +234,6 @@ Instructions:
             "Confidence": "Low"
         }
 
-@app.errorhandler(404)
-def not_found_error(error):
-    return jsonify({"error": "Not found"}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({"error": "Internal server error"}), 500
-
-@app.route('/health')
-def health_check():
-    """Basic health check endpoint"""
-    return jsonify({"status": "healthy"}), 200
-
-@app.route('/api/countries', methods=['GET'])
 def get_countries():
     """Get list of supported countries"""
     countries = [
@@ -297,97 +250,106 @@ def get_countries():
         {"code": "tw", "name": "Taiwan"},
         {"code": "au", "name": "Australia"}
     ]
-    return jsonify(countries)
+    return countries
 
-@app.route('/api/process', methods=['POST'])
-def process_file():
-    """Process uploaded CSV file"""
-    try:
-        # Create a temporary directory for file operations
-        temp_dir = '/tmp'
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        # Get the CSV data from the request
-        csv_data = request.get_json()
-        if not csv_data or 'data' not in csv_data:
-            return jsonify({"error": "No CSV data provided"}), 400
+def handle_request(path, method='GET', body=None):
+    """Handle incoming requests"""
+    if path == '/api/countries' and method == 'GET':
+        return {
+            'statusCode': 200,
+            'body': json.dumps(get_countries())
+        }
+    elif path == '/api/process' and method == 'POST':
+        try:
+            # Process the CSV data
+            data = json.loads(body)
+            if not data or 'data' not in data:
+                return {
+                    'statusCode': 400,
+                    'body': json.dumps({"error": "No CSV data provided"})
+                }
 
-        # Parse the CSV data
-        rows = []
-        for line in csv_data['data'].split('\n'):
-            if line.strip():  # Skip empty lines
-                rows.append(line.split(','))
+            # Parse CSV data and process it
+            rows = []
+            for line in data['data'].split('\n'):
+                if line.strip():  # Skip empty lines
+                    rows.append(line.split(','))
 
-        # Process each company
-        results = []
-        for i, row in enumerate(rows[1:], 1):  # Skip header row
-            if len(row) >= 2:
-                company = row[0].strip()
-                country = row[1].strip().lower()
-                
-                logger.info(f"Processing {company} ({country}) - {i}/{len(rows)-1}")
-                
-                result = search_web_info(company, country)
-                if result:
-                    results.append(result)
-                
-                # Add a small delay between requests
-                time.sleep(random.uniform(1, 2))
+            # Process each company
+            results = []
+            for i, row in enumerate(rows[1:], 1):  # Skip header row
+                if len(row) >= 2:
+                    company = row[0].strip()
+                    country = row[1].strip().lower()
+                    
+                    logger.info(f"Processing {company} ({country}) - {i}/{len(rows)-1}")
+                    
+                    result = search_web_info(company, country)
+                    if result:
+                        results.append(result)
+                    
+                    # Add a small delay between requests
+                    time.sleep(random.uniform(1, 2))
 
-        # Create output CSV
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(temp_dir, f"employee_counts_{timestamp}.csv")
-        
-        with open(output_file, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=["Company", "Employee Count", "Confidence"])
-            writer.writeheader()
-            writer.writerows(results)
-        
-        logger.debug(f"Created output file: {output_file} ({os.path.getsize(output_file)} bytes)")
-        
-        # Return the file
-        logger.info("Preparing file download...")
-        return send_file(
-            output_file,
-            mimetype='text/csv',
-            as_attachment=True,
-            download_name=f"employee_counts_{timestamp}.csv"
-        )
-
-    except Exception as e:
-        logger.error(f"Error processing file: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+            # Create output CSV
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = f"employee_counts_{timestamp}.csv"
+            
+            with open(output_file, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=["Company", "Employee Count", "Confidence"])
+                writer.writeheader()
+                writer.writerows(results)
+            
+            logger.debug(f"Created output file: {output_file} ({os.path.getsize(output_file)} bytes)")
+            
+            # Return the file
+            logger.info("Preparing file download...")
+            with open(output_file, 'rb') as f:
+                return {
+                    'statusCode': 200,
+                    'body': f.read(),
+                    'headers': {
+                        'Content-Type': 'text/csv',
+                        'Content-Disposition': f'attachment; filename="{output_file}"'
+                    }
+                }
+        except Exception as e:
+            logger.error(f"Error processing file: {str(e)}\n{traceback.format_exc()}")
+            return {
+                'statusCode': 500,
+                'body': json.dumps({"error": str(e)})
+            }
+    else:
+        return {
+            'statusCode': 404,
+            'body': json.dumps({"error": "Not found"})
+        }
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
+        response = handle_request(self.path, 'GET')
+        self.send_response(response['statusCode'])
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write('Health check OK'.encode())
-        
+        self.wfile.write(response['body'].encode())
+
     def do_POST(self):
-        # Get the content length
         content_length = int(self.headers['Content-Length'])
-        # Get the request body
-        body = self.rfile.read(content_length)
-        
-        # Create a test client
-        with app.test_client() as client:
-            # Forward the request to Flask
-            response = client.post(self.path, data=body, headers=dict(self.headers))
-            
-            # Send the response back
-            self.send_response(response.status_code)
-            for header, value in response.headers:
-                self.send_header(header, value)
-            self.end_headers()
-            self.wfile.write(response.data)
+        body = self.rfile.read(content_length).decode()
+        response = handle_request(self.path, 'POST', body)
+        self.send_response(response['statusCode'])
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        if 'headers' in response:
+            for key, value in response['headers'].items():
+                self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(response['body'].encode())
 
-def run_server():
-    server_address = ('', 8000)
-    httpd = HTTPServer(server_address, handler)
-    print('Starting httpd...')
-    httpd.serve_forever()
-
-if __name__ == "__main__":
-    run_server()
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
