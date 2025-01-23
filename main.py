@@ -183,35 +183,52 @@ def get_countries():
 def process_file():
     """Process uploaded CSV file"""
     try:
+        logger.debug(f"Received file upload request. Files: {request.files}")
+        logger.debug(f"Form data: {request.form}")
+        
         if 'file' not in request.files:
+            logger.error("No file part in request")
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files['file']
+        if not file.filename:
+            logger.error("No file selected")
+            return jsonify({"error": "No file selected"}), 400
+            
         if not file.filename.endswith('.csv'):
+            logger.error(f"Invalid file type: {file.filename}")
             return jsonify({"error": "File must be a CSV"}), 400
 
         # Read CSV file
+        logger.debug(f"Reading CSV file: {file.filename}")
         df = pd.read_csv(file)
         required_columns = ['Company', 'Country']
+        
+        logger.debug(f"CSV columns: {df.columns.tolist()}")
         if not all(col in df.columns for col in required_columns):
-            return jsonify({"error": "CSV must contain Company and Country columns"}), 400
+            missing = [col for col in required_columns if col not in df.columns]
+            logger.error(f"Missing required columns: {missing}")
+            return jsonify({"error": f"CSV must contain columns: {', '.join(required_columns)}"}), 400
 
         # Process each company
         results = []
         total_rows = len(df)
-        logger.debug(f"Processing {total_rows} companies")
+        logger.info(f"Processing {total_rows} companies")
 
         for index, row in df.iterrows():
             company = row['Company'].strip()
             country = row['Country'].strip()
             
-            logger.debug(f"Processing batch {index + 1}/{total_rows}")
+            logger.info(f"Processing {company} ({country}) - {index + 1}/{total_rows}")
             result = search_web_info(company, country)
             if result:
                 results.append(result)
+                logger.debug(f"Got result for {company}: {result}")
+            else:
+                logger.warning(f"No result found for {company}")
 
         # Create output CSV
-        logger.debug("Creating output CSV...")
+        logger.info("Creating output CSV...")
         output_filename = f"employee_counts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         
         with open(output_filename, 'w', newline='') as f:
@@ -219,23 +236,11 @@ def process_file():
             writer.writeheader()
             writer.writerows(results)
 
-        # Prepare file download
-        logger.debug("Preparing file download...")
-        
-        # Set CORS headers
-        logger.debug(f"Request origin: {request.headers.get('Origin')}")
-        headers = {
-            'Content-Type': 'text/csv',
-            'Content-Length': os.path.getsize(output_filename),
-            'Content-Disposition': f'attachment; filename={output_filename}',
-            'Access-Control-Allow-Origin': request.headers.get('Origin'),
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type',
-            'Access-Control-Max-Age': '3600',
-            'Access-Control-Allow-Credentials': 'true'
-        }
-        logger.debug(f"Response headers: {headers}")
+        logger.debug(f"Created output file: {output_filename} ({os.path.getsize(output_filename)} bytes)")
 
+        # Prepare file download
+        logger.info("Preparing file download...")
+        
         return send_file(
             output_filename,
             mimetype='text/csv',
@@ -243,8 +248,15 @@ def process_file():
             download_name=output_filename
         )
 
+    except pd.errors.EmptyDataError:
+        logger.error("Empty CSV file uploaded")
+        return jsonify({"error": "The CSV file is empty"}), 400
+    except pd.errors.ParserError as e:
+        logger.error(f"CSV parsing error: {str(e)}")
+        return jsonify({"error": "Invalid CSV format"}), 400
     except Exception as e:
         logger.error(f"Error processing file: {str(e)}")
+        logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
