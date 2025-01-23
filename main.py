@@ -48,25 +48,417 @@ def after_request(response):
 def search_web_info(company_name, country):
     """Search the web using multiple specific queries"""
     try:
-        # Create more specific search queries
+        # Create more specific queries focusing on LinkedIn and career pages
         queries = [
-            f"{company_name} number of employees {country}",
-            f"{company_name} office {country} team size",
-            f"{company_name} {country} expansion news",
-            f"{company_name} {country} career",
-            f"{company_name} annual report {country}",
-            f"{company_name} {country} headquarters",
+            f"{company_name} {country} linkedin",
+            f"{company_name} {country} careers",
+            f"{company_name} {country} jobs",
+            f"{company_name} {country} office location",
         ]
         
-        # Combine results from multiple queries
-        results = []
+        # Search and combine results
+        all_results = []
         for query in queries:
-            results.append(f"Search results for '{query}': Using regional knowledge for estimation")
+            try:
+                search_results = search_web({"query": query})
+                if search_results:
+                    for result in search_results:
+                        content = read_url_content({"Url": result["url"]})
+                        if content:
+                            all_results.append(f"Source ({result['url']}): {content}")
+            except Exception as e:
+                print(f"Error searching for {query}: {e}")
+                continue
             
-        return "\n\n".join(results)
+        if all_results:
+            return "\n\n".join(all_results)
+        return "No specific information found. Using regional knowledge for estimation."
+        
     except Exception as e:
         print(f"Error during web search: {str(e)}")
-        return "Using regional knowledge for estimation"
+        return "Error occurred during search. Using regional knowledge for estimation."
+
+def review_employee_count(company, country, initial_result, web_info):
+    """Have GPT-4 review the initial employee count estimate"""
+    try:
+        response = call_openai_with_retry(
+            messages=[
+                {"role": "system", "content": f"""You are a senior data analyst reviewing employee count estimates.
+                Your job is to validate and potentially adjust estimates based on the following criteria:
+
+                VALIDATION CHECKLIST:
+                1. Check if the estimate matches known patterns for {country}:
+                   
+                   TECH MNC OFFICE SIZES BY COUNTRY:
+                   Singapore:
+                   * Regional HQ: 1000-5000+ employees
+                   * Tech Hub: 500-2000 employees
+                   * Sales/Support: 100-500 employees
+
+                   Malaysia:
+                   * Regional HQ: 500+ employees
+                   * Development Center: 200-500 employees
+                   * Regional Office: 50-200 employees
+                   * Sales/Support: 10-50 employees
+
+                   Indonesia:
+                   * Country HQ: 500-2000 employees
+                   * Tech Center: 200-1000 employees
+                   * Regional: 100-500 employees
+                   * Sales: 50-200 employees
+
+                   Vietnam:
+                   * Tech Hub: 500-2000 employees
+                   * Dev Center: 200-1000 employees
+                   * Sales: 50-200 employees
+
+                   Thailand:
+                   * Country HQ: 200-1000 employees
+                   * Tech/Support: 100-500 employees
+                   * Sales: 50-200 employees
+
+                   Philippines:
+                   * Support Hub: 500-2000 employees
+                   * Tech Center: 200-1000 employees
+                   * Sales: 50-200 employees
+
+                   Japan:
+                   * Country HQ: 1000-5000+ employees
+                   * Tech Center: 500-2000 employees
+                   * Regional: 200-1000 employees
+
+                   South Korea:
+                   * Country HQ: 1000-5000+ employees
+                   * R&D Center: 500-2000 employees
+                   * Sales: 100-500 employees
+
+                   China:
+                   * Country HQ: 2000-10000+ employees
+                   * R&D Centers: 1000-5000 employees
+                   * Regional: 500-2000 employees
+                   * City Office: 100-500 employees
+
+                   Hong Kong:
+                   * Regional HQ: 500-2000 employees
+                   * Financial: 200-1000 employees
+                   * Sales: 100-500 employees
+
+                   Taiwan:
+                   * R&D Center: 500-2000 employees
+                   * Country HQ: 200-1000 employees
+                   * Sales: 100-500 employees
+
+                   Australia:
+                   * Country HQ: 1000-5000+ employees
+                   * Tech Hub: 500-2000 employees
+                   * Regional: 200-1000 employees
+                   * Sales: 100-500 employees
+
+                   TECH STARTUP SIZES BY FUNDING (All Countries):
+                   * Seed: 5-20 employees
+                   * Series A: 20-50 employees
+                   * Series B: 50-200 employees
+                   * Series C+: 200-1000+ employees
+
+                   TRADITIONAL INDUSTRIES BY COUNTRY TIER:
+                   Tier 1 (SG, JP, KR, AU):
+                   * Manufacturing: 200-2000+ per facility
+                   * Retail: 20-100 per location
+                   * Services: 50-200 per office
+                   * Banks: 100-500 per major branch
+
+                   Tier 2 (HK, TW, MY):
+                   * Manufacturing: 100-1000 per facility
+                   * Retail: 10-50 per location
+                   * Services: 20-100 per office
+                   * Banks: 50-200 per major branch
+
+                   Tier 3 (ID, TH, VN, PH):
+                   * Manufacturing: 200-2000+ per facility (labor intensive)
+                   * Retail: 5-30 per location
+                   * Services: 10-50 per office
+                   * Banks: 20-100 per major branch
+
+                   China (Special Case):
+                   * Manufacturing: 500-5000+ per facility
+                   * Retail: 10-50 per location
+                   * Services: 50-200 per office
+                   * Banks: 100-500 per major branch
+                   
+                2. Common Red Flags:
+                   - Numbers too high for market size
+                   - Global numbers instead of local office
+                   - Outdated or pre-pandemic numbers
+                   - Inconsistent with office location/type
+                
+                3. Location-Based Validation:
+                   SINGAPORE:
+                   - CBD/Marina Bay: Finance/Tech HQs (500-2000)
+                   - One-North: R&D/Tech (200-1000)
+                   - Changi: Support Centers (100-500)
+
+                   MALAYSIA:
+                   - KL Sentral/Bangsar South: Tech (50-200)
+                   - KLCC/Central: Corporate (100-300)
+                   - Cyberjaya: Support/Dev (200-500)
+
+                   INDONESIA:
+                   - Jakarta CBD: Corporate (200-1000)
+                   - BSD City: Tech Hub (100-500)
+                   - Industrial: Manufacturing (500-2000)
+
+                   VIETNAM:
+                   - HCMC D1/D2: Corporate (100-500)
+                   - Hanoi West: Tech Hub (200-1000)
+                   - Industrial Parks: Manufacturing (1000-5000)
+
+                   THAILAND:
+                   - Sukhumvit: Corporate (100-500)
+                   - Sathorn: Finance (200-1000)
+                   - Eastern Seaboard: Manufacturing (500-2000)
+
+                   PHILIPPINES:
+                   - BGC/Makati: Corporate (200-1000)
+                   - Cebu IT Park: Support (500-2000)
+                   - Clark/Subic: Manufacturing (1000-5000)
+
+                4. Industry-Specific Checks:
+                   - Tech: Compare with similar tech companies in same city
+                   - Manufacturing: Check against facility size and automation level
+                   - Services: Validate against market share and city tier
+                   - Retail: Cross-check with store count and country tier
+
+                If you find issues:
+                1. Adjust the number to a more realistic range for the specific country
+                2. Update the confidence level if needed
+                3. Add your reasoning to the explanation
+                4. Add "REVIEWED" to the sources list
+
+                If the estimate looks correct:
+                1. Confirm the number
+                2. Add validation notes
+                3. Add "VALIDATED" to the sources list"""},
+                {"role": "user", "content": f"""Review this employee count estimate for {company} in {country}:
+
+Initial Estimate:
+- Count: {initial_result.get('employee_count')}
+- Confidence: {initial_result.get('confidence')}
+- Sources: {initial_result.get('sources')}
+- Explanation: {initial_result.get('explanation')}
+
+Available Information:
+{web_info}
+
+Is this estimate realistic for {country}? Should it be adjusted based on the country-specific patterns?"""}
+            ],
+            functions=[{
+                "name": "review_estimate",
+                "description": "Review and potentially adjust the employee count estimate",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "employee_count": {
+                            "type": "integer",
+                            "description": "The validated or adjusted employee count"
+                        },
+                        "confidence": {
+                            "type": "string",
+                            "enum": ["HIGH", "MEDIUM", "LOW"],
+                            "description": "Updated confidence level in the count"
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Updated list of sources, including review status"
+                        },
+                        "explanation": {
+                            "type": "string",
+                            "description": "Updated explanation including review notes"
+                        },
+                        "was_adjusted": {
+                            "type": "boolean",
+                            "description": "Whether the estimate was adjusted during review"
+                        }
+                    },
+                    "required": ["employee_count", "confidence", "sources", "explanation", "was_adjusted"]
+                }
+            }],
+            function_call={"name": "review_estimate"}
+        )
+        
+        if response.choices[0].message.get("function_call"):
+            return json.loads(response.choices[0].message["function_call"]["arguments"])
+        return initial_result
+        
+    except Exception as e:
+        print(f"Error during review: {str(e)}")
+        return initial_result
+
+def validate_employee_count(count):
+    """Validate and clean employee count value"""
+    if isinstance(count, int):
+        return count
+    if isinstance(count, str):
+        # Remove any non-numeric characters
+        cleaned = ''.join(c for c in count if c.isdigit())
+        if cleaned:
+            try:
+                return int(cleaned)
+            except ValueError:
+                return None
+    return None
+
+def process_company_batch(companies, country, batch_id):
+    """Process a batch of companies"""
+    results = []
+    for company in companies:
+        try:
+            web_info = search_web_info(company, country)
+            
+            # Initial estimate
+            response = call_openai_with_retry(
+                messages=[
+                    {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
+                    Analyze LinkedIn and career page data to estimate employee counts based on the following guidelines:
+
+                    PRIMARY DATA SOURCES (in order of priority):
+                    1. LinkedIn company page employee count ranges
+                    2. Company career pages showing open positions
+                    3. Office locations and sizes
+                    4. Industry benchmarks and regional patterns
+
+                    INDUSTRY-SPECIFIC PATTERNS:
+                    TECH COMPANIES:
+                    - MNC Tech Office (Malaysia):
+                      * Small: 10-50 (Sales/Support)
+                      * Medium: 50-200 (Regional Office)
+                      * Large: 200-500 (Development Center)
+                      * Very Large: 500+ (Regional HQ)
+                    
+                    TRADITIONAL INDUSTRIES:
+                    - Manufacturing: 100-1000 based on facility size
+                    - Retail: 10-50 per major location
+                    - Services: 20-100 per office
+                    - Banks: 50-200 per major branch
+
+                    REGIONAL CONTEXT FOR MALAYSIA:
+                    - KL Sentral/Bangsar South: Tech offices (50-200)
+                    - KLCC/Central: Corporate offices (100-300)
+                    - Cyberjaya: Support/Dev centers (200-500)
+                    - Industrial areas: Manufacturing (100-1000)
+
+                    CONFIDENCE SCORING:
+                    HIGH:
+                    - Direct LinkedIn employee count range
+                    - Multiple job postings with team size hints
+                    - Clear office location with known capacity
+
+                    MEDIUM:
+                    - Indirect LinkedIn data (job posts, activity)
+                    - Single office location without size
+                    - Industry standard ratios
+
+                    LOW:
+                    - No LinkedIn presence
+                    - No job postings
+                    - Only global presence without local info
+
+                    VALIDATION RULES:
+                    1. Compare with similar companies in region
+                    2. Check if employee count matches office capacity
+                    3. Validate against industry benchmarks
+                    4. Consider company age and market presence
+
+                    IMPORTANT NOTES:
+                    - Prefer conservative estimates when uncertain
+                    - For MNCs, focus only on local office size
+                    - Consider remote workers based in the country
+                    - Account for recent market conditions"""},
+                    {"role": "user", "content": f"Based on LinkedIn and career page data, estimate the employee count for {company} in {country}. Here's the available information:\n\n{web_info}"}
+                ],
+                functions=[{
+                    "name": "get_employee_count",
+                    "description": "Get the number of employees at a company",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "employee_count": {
+                                "type": "integer",
+                                "description": "The number of employees at the company (must be a plain integer)"
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["HIGH", "MEDIUM", "LOW"],
+                                "description": "Confidence level in the employee count"
+                            },
+                            "sources": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "List of sources used to determine the count"
+                            },
+                            "explanation": {
+                                "type": "string",
+                                "description": "Brief explanation of the reasoning"
+                            }
+                        },
+                        "required": ["employee_count", "confidence", "sources", "explanation"]
+                    }
+                }],
+                function_call={"name": "get_employee_count"}
+            )
+            
+            if response.choices[0].message.get("function_call"):
+                initial_result = json.loads(response.choices[0].message["function_call"]["arguments"])
+                
+                # Validate employee count
+                employee_count = validate_employee_count(initial_result.get("employee_count"))
+                if employee_count is None:
+                    raise ValueError(f"Invalid employee count received for {company}")
+                initial_result["employee_count"] = employee_count
+                
+                # Have GPT-4 review the estimate
+                reviewed_result = review_employee_count(company, country, initial_result, web_info)
+                
+                # Validate reviewed count
+                reviewed_count = validate_employee_count(reviewed_result.get("employee_count"))
+                if reviewed_count is None:
+                    # If review gives invalid count, use original
+                    reviewed_result["employee_count"] = employee_count
+                else:
+                    reviewed_result["employee_count"] = reviewed_count
+                
+                results.append({
+                    "company": company,
+                    "employee_count": reviewed_result["employee_count"],
+                    "confidence": reviewed_result["confidence"],
+                    "sources": ", ".join(reviewed_result["sources"]),
+                    "explanation": reviewed_result["explanation"],
+                    "was_adjusted": reviewed_result.get("was_adjusted", False)
+                })
+            else:
+                results.append({
+                    "company": company,
+                    "error": "Failed to process company information"
+                })
+                
+            # Update progress in Redis if using it
+            if using_redis:
+                processed = redis_client.hincrby(f"batch:{batch_id}", "processed", 1)
+                total = int(redis_client.hget(f"batch:{batch_id}", "total") or 0)
+                if processed >= total:
+                    redis_client.hset(f"batch:{batch_id}", "status", "completed")
+                    redis_client.set(f"results:{batch_id}", json.dumps(results))
+                    
+        except Exception as e:
+            print(f"Error processing company {company}: {str(e)}")
+            results.append({
+                "company": company,
+                "error": str(e)
+            })
+    
+    return results
 
 @app.route('/')
 def index():
@@ -137,138 +529,6 @@ def call_openai_with_retry(messages, functions=None, function_call=None):
     except Exception as e:
         print(f"Error calling OpenAI API: {str(e)}")
         raise
-
-def process_company_batch(companies, country, batch_id):
-    """Process a batch of companies"""
-    results = []
-    for company in companies:
-        try:
-            web_info = search_web_info(company, country)
-            response = call_openai_with_retry(
-                messages=[
-                    {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
-                    Analyze web search results and provide accurate employee counts based on the following guidelines:
-
-                    DATA SOURCES (in order of priority):
-                    1. Recent news articles with specific numbers from company officials
-                    2. Company career pages showing team size
-                    3. Public company profiles with employee ranges
-                    4. News about office openings/expansions
-                    5. Job posting volumes and patterns
-
-                    INDUSTRY-SPECIFIC PATTERNS:
-                    TECH COMPANIES:
-                    - Startups: Correlate with funding (Seed: 5-20, Series A: 20-50, B: 50-200, C+: 200+)
-                    - MNC Sales Offices: Usually 20-100 unless regional HQ
-                    - Tech Hubs: Can exceed 1000 for major development centers
-                    - R&D Centers: Typically 100-500 engineers
-
-                    TRADITIONAL INDUSTRIES:
-                    - Manufacturing: Consider facility size and automation
-                    - Retail: Factor in store count and typical staffing
-                    - Services: Use revenue per employee benchmarks
-                    - Banks: Branch network indicates scale
-
-                    REGIONAL CONTEXT FOR MALAYSIA:
-                    - KL Sentral/Bangsar South: Tech hubs, larger teams
-                    - KLCC/Central: Financial/Corporate HQs
-                    - Cyberjaya: Tech/Support centers
-                    - Industrial areas: Manufacturing focus
-
-                    CONFIDENCE SCORING:
-                    HIGH:
-                    - Recent news with specific numbers
-                    - Multiple consistent sources
-                    - Official company statements
-
-                    MEDIUM:
-                    - Employee ranges from reliable sources
-                    - Recent job posting patterns
-                    - Industry-standard ratios
-
-                    LOW:
-                    - Outdated information
-                    - Conflicting sources
-                    - Global numbers without local breakdown
-
-                    VALIDATION RULES:
-                    1. Cross-reference multiple sources
-                    2. Consider company age and growth stage
-                    3. Compare with industry benchmarks
-                    4. Check regional patterns
-                    5. Flag unusual growth/decline
-
-                    Return your analysis in a structured format with:
-                    1. Employee count
-                    2. Confidence level (HIGH, MEDIUM, LOW)
-                    3. Sources used
-                    4. Brief explanation of your reasoning"""},
-                    {"role": "user", "content": f"Based on these search results, analyze the employee count for {company} in {country}:\n\n{web_info}"}
-                ],
-                functions=[{
-                    "name": "get_employee_count",
-                    "description": "Get the number of employees at a company",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "employee_count": {
-                                "type": "integer",
-                                "description": "The number of employees at the company"
-                            },
-                            "confidence": {
-                                "type": "string",
-                                "enum": ["HIGH", "MEDIUM", "LOW"],
-                                "description": "Confidence level in the employee count"
-                            },
-                            "sources": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                },
-                                "description": "List of sources used to determine the count"
-                            },
-                            "explanation": {
-                                "type": "string",
-                                "description": "Brief explanation of the reasoning"
-                            }
-                        },
-                        "required": ["employee_count", "confidence", "sources", "explanation"]
-                    }
-                }],
-                function_call={"name": "get_employee_count"}
-            )
-            
-            if response.choices[0].message.get("function_call"):
-                result = json.loads(response.choices[0].message["function_call"]["arguments"])
-                results.append({
-                    "company": company,
-                    "employee_count": result["employee_count"],
-                    "confidence": result["confidence"],
-                    "sources": ", ".join(result["sources"]),
-                    "explanation": result["explanation"]
-                })
-            else:
-                results.append({
-                    "company": company,
-                    "error": "Failed to process company information"
-                })
-                
-            # Update progress in Redis if using it
-            if using_redis:
-                processed = redis_client.hincrby(f"batch:{batch_id}", "processed", 1)
-                total = int(redis_client.hget(f"batch:{batch_id}", "total") or 0)
-                if processed >= total:
-                    redis_client.hset(f"batch:{batch_id}", "status", "completed")
-                    redis_client.set(f"results:{batch_id}", json.dumps(results))
-                    
-        except Exception as e:
-            print(f"Error processing company {company}: {str(e)}")
-            results.append({
-                "company": company,
-                "error": str(e)
-            })
-    
-    return results
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
@@ -355,11 +615,11 @@ def process_file():
                 # Create CSV file in memory
                 string_output = StringIO()
                 writer = csv.writer(string_output)
-                writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Explanation', 'Error'])
+                writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Explanation', 'Was Adjusted', 'Error'])
                 
                 for result in results:
                     if 'error' in result:
-                        writer.writerow([result['company'], '', '', '', '', result['error']])
+                        writer.writerow([result['company'], '', '', '', '', '', result['error']])
                     else:
                         writer.writerow([
                             result['company'],
@@ -367,6 +627,7 @@ def process_file():
                             result.get('confidence', ''),
                             result.get('sources', ''),
                             result.get('explanation', ''),
+                            'Yes' if result.get('was_adjusted', False) else 'No',
                             ''
                         ])
                 
