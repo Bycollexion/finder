@@ -375,71 +375,31 @@ def process_company_batch(companies, country, batch_id):
     return results
 
 @app.route('/')
-def index():
-    """Basic health check endpoint - doesn't check OpenAI"""
-    try:
-        # Only check Redis connection
-        if using_redis:
-            redis_client.ping()
-            redis_status = "connected"
-        else:
-            redis_status = "using fallback"
-            
-        return jsonify({
-            "status": "healthy",
-            "time": time.time(),
-            "redis": redis_status
-        })
-    except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "time": time.time()
-        }), 500
-
-@app.route('/health')
 def health_check():
-    """Full health check endpoint - includes OpenAI check"""
+    """Basic health check endpoint"""
     try:
-        # Check Redis
-        redis_status = "not checked"
         if using_redis:
             redis_client.ping()
-            redis_status = "connected"
-        else:
-            redis_status = "using fallback"
-
-        # Check OpenAI - simple completion
-        openai_status = "not checked"
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": "test"}],
-                max_tokens=5
-            )
-            openai_status = "connected"
-        except Exception as e:
-            openai_status = f"error: {str(e)}"
-
-        return jsonify({
-            "status": "healthy",
-            "time": time.time(),
-            "redis": redis_status,
-            "openai": openai_status
-        })
+        return jsonify({"status": "healthy", "redis": "connected" if using_redis else "mock"}), 200
     except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "time": time.time()
-        }), 500
+        print(f"Health check failed: {str(e)}")
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 @app.route('/api/countries', methods=['GET', 'OPTIONS'])
 def get_countries():
     """Get list of supported countries"""
     try:
+        print(f"Countries request received. Method: {request.method}")
+        print(f"Headers: {dict(request.headers)}")
+
         if request.method == 'OPTIONS':
-            return handle_preflight()
+            response = make_response()
+            response.headers.update({
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            })
+            return response, 204
 
         print("Getting countries list")
         countries = [
@@ -457,23 +417,34 @@ def get_countries():
             {"id": "au", "name": "Australia"}
         ]
         
+        print(f"Returning {len(countries)} countries")
+        
         # Create response with CORS headers
-        response = jsonify(countries)
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        response = make_response(jsonify(countries))
+        response.headers.update({
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        })
         return response
 
     except Exception as e:
         print(f"Error getting countries: {str(e)}")
         traceback.print_exc()
-        error_response = jsonify({
+        error_response = make_response(jsonify({
             "error": "Failed to get countries",
             "details": str(e)
+        }))
+        error_response.headers.update({
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Content-Type': 'application/json'
         })
-        error_response.headers['Access-Control-Allow-Origin'] = '*'
-        error_response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-        error_response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
         return error_response, 500
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
