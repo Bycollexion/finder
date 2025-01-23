@@ -3,7 +3,7 @@ from flask_cors import CORS
 import os
 import json
 import csv
-from io import StringIO
+from io import StringIO, BytesIO
 import openai
 import traceback
 import requests
@@ -328,9 +328,9 @@ def process_file():
                 # Process all companies in one batch
                 results = process_company_batch(companies, country, batch_id)
                 
-                # Create CSV file
-                output = StringIO()
-                writer = csv.writer(output)
+                # Create CSV file in memory
+                string_output = StringIO()
+                writer = csv.writer(string_output)
                 writer.writerow(['Company', 'Employee Count', 'Error'])
                 
                 for result in results:
@@ -339,19 +339,24 @@ def process_file():
                     else:
                         writer.writerow([result['company'], result.get('employee_count', ''), ''])
                 
-                # Create response with CSV file
-                output.seek(0)
+                # Convert to bytes for file download
+                bytes_output = BytesIO()
+                bytes_output.write(string_output.getvalue().encode('utf-8'))
+                bytes_output.seek(0)
+                
                 return send_file(
-                    StringIO(output.getvalue()),
+                    bytes_output,
                     mimetype='text/csv',
                     as_attachment=True,
                     download_name=f'results_{batch_id}.csv'
                 )
                 
             except Exception as e:
+                print(f"Error processing file: {str(e)}")  # Add debug logging
                 return jsonify({"error": str(e)}), 500
             
     except Exception as e:
+        print(f"Error in process_file: {str(e)}")  # Add debug logging
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/status/<batch_id>', methods=['GET'])
