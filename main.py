@@ -64,53 +64,67 @@ def extract_number(text):
         return numbers[0].replace(',', '')
     return None
 
+def get_country_name(code):
+    """Convert country code to full name"""
+    country_map = {
+        'sg': 'Singapore',
+        'my': 'Malaysia',
+        'id': 'Indonesia',
+        'th': 'Thailand',
+        'vn': 'Vietnam',
+        'ph': 'Philippines'
+    }
+    return country_map.get(code.lower(), code)
+
 def search_web_info(company, country):
     """Search for company employee count information using OpenAI"""
     try:
         if company.lower() == 'company':
             return None
 
+        country_name = get_country_name(country)
+
         # First ask GPT to search and analyze
         messages = [
             {
                 "role": "system",
-                "content": f"""You are querying multiple databases to find employee counts and office information for {company} in {country}.
+                "content": f"""You are querying multiple databases to find employee counts and office information for {company} in {country_name}.
                 
                 CHECK THESE SOURCES IN ORDER:
                 1. LinkedIn Company Data:
-                   - Employee count in {country}
+                   - Employee count in {country_name}
                    - Office locations
                    - Current job openings
                 
                 2. Company Annual Reports:
-                   - Regional headcount
+                   - Regional headcount for {country_name}/Southeast Asia
                    - Office expansions
-                   - Investment in {country}
+                   - Investment in {country_name}
                 
                 3. Government Data:
-                   - Business registration
+                   - Business registration in {country_name}
                    - Employment passes
                    - Tax filings
                 
                 4. Commercial Real Estate:
-                   - Office leases
+                   - Office leases in {country_name}
                    - Square footage
                    - Recent moves
                 
                 5. News and Press:
-                   - Hiring announcements
+                   - Hiring announcements in {country_name}
                    - Office openings
                    - Layoff reports
                 
                 FORMAT YOUR RESPONSE:
                 
                 OFFICE STATUS:
-                □ Confirmed {country} office
-                □ No office found
+                □ Confirmed presence in {country_name}
+                □ No presence found
                 □ Status unclear
                 
                 PRIMARY OFFICE:
-                - Address: [Full address]
+                - Address: [Full address in {country_name}]
                 - Type: [HQ/Regional/Sales/R&D]
                 - Size: [Square feet/floors]
                 
@@ -120,18 +134,18 @@ def search_web_info(company, country):
                 - Source: [LinkedIn/Annual Report/News]
                 
                 HIRING STATUS:
-                - Active Roles: [Number]
+                - Active Roles: [Number in {country_name}]
                 - Key Departments: [List]
                 - Growth Trend: [Expanding/Stable/Reducing]
                 
                 NOTES:
-                - [Any important context]
+                - [Any important context about {country_name} operations]
                 
                 BE SPECIFIC: Report only real data you find. If you can't find something, mark it as "No data" rather than making assumptions."""
             },
             {
                 "role": "user",
-                "content": f"Query all data sources and report the current status of {company}'s presence in {country}."
+                "content": f"Query all data sources and report the current status of {company}'s presence in {country_name}."
             }
         ]
 
@@ -149,7 +163,7 @@ def search_web_info(company, country):
         messages = [
             {
                 "role": "system",
-                "content": f"""You are calculating the most accurate employee count for {company} in {country}.
+                "content": f"""You are calculating the most accurate employee count for {company} in {country_name}.
                 
                 CALCULATION RULES:
                 1. If "Latest Count" exists with a date within 2 years:
@@ -193,7 +207,7 @@ def search_web_info(company, country):
         confidence = "High" if "Latest Count:" in web_data and "Source:" in web_data else "Low"
         
         if not count or count == "0":
-            logger.info(f"No presence found for {company} in {country}")
+            logger.info(f"No presence found for {company} in {country_name}")
             return {
                 "Company": company,
                 "Employee Count": "0",
