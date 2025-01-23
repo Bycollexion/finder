@@ -5,14 +5,14 @@
   "outputDirectory": "frontend/dist",
   "installCommand": "cd frontend && npm install",
   "functions": {
-    "api/main.py": {
+    "main.py": {
       "runtime": "vercel-python@3.1.0",
       "memory": 1024,
       "maxDuration": 10
     }
   },
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/main.py" },
+    { "src": "/api/(.*)", "dest": "/main.py" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
