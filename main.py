@@ -285,41 +285,72 @@ def process_file():
         if not companies:
             return jsonify({"error": "No companies found in CSV"}), 400
             
-        # Create batch ID and store metadata
+        # Create batch ID
         batch_id = str(uuid.uuid4())
-        batch_size = 50  # Process 50 companies per batch
-        num_batches = math.ceil(total_companies / batch_size)
         
-        redis_client.hset(f"batch:{batch_id}",
-            mapping={
-                "total": total_companies,
-                "processed": 0,
-                "status": "processing",
-                "start_time": datetime.utcnow().isoformat(),
-                "country": country
-            }
-        )
-        
-        # Split into batches and queue jobs
-        jobs = []
-        for i in range(0, total_companies, batch_size):
-            batch = companies[i:i + batch_size]
-            job = queue.enqueue(
-                process_company_batch,
-                args=(batch, country, batch_id),
-                job_timeout='1h'
-            )
-            jobs.append(job.id)
+        if using_redis:
+            # Use Redis and RQ for processing in production
+            batch_size = 50  # Process 50 companies per batch
+            num_batches = math.ceil(total_companies / batch_size)
             
-        redis_client.hset(f"batch:{batch_id}", "jobs", json.dumps(jobs))
-        
-        return jsonify({
-            "message": "Processing started",
-            "batch_id": batch_id,
-            "total_companies": total_companies,
-            "num_batches": num_batches
-        })
-        
+            redis_client.hset(f"batch:{batch_id}",
+                mapping={
+                    "total": total_companies,
+                    "processed": 0,
+                    "status": "processing",
+                    "start_time": datetime.utcnow().isoformat(),
+                    "country": country
+                }
+            )
+            
+            # Split into batches and queue jobs
+            jobs = []
+            for i in range(0, total_companies, batch_size):
+                batch = companies[i:i + batch_size]
+                job = queue.enqueue(
+                    process_company_batch,
+                    args=(batch, country, batch_id),
+                    job_timeout='1h'
+                )
+                jobs.append(job.id)
+                
+            redis_client.hset(f"batch:{batch_id}", "jobs", json.dumps(jobs))
+            
+            return jsonify({
+                "message": "Processing started",
+                "batch_id": batch_id,
+                "total_companies": total_companies,
+                "num_batches": num_batches
+            })
+        else:
+            # Process synchronously in development
+            try:
+                # Process all companies in one batch
+                results = process_company_batch(companies, country, batch_id)
+                
+                # Create CSV file
+                output = StringIO()
+                writer = csv.writer(output)
+                writer.writerow(['Company', 'Employee Count', 'Error'])
+                
+                for result in results:
+                    if 'error' in result:
+                        writer.writerow([result['company'], '', result['error']])
+                    else:
+                        writer.writerow([result['company'], result.get('employee_count', ''), ''])
+                
+                # Create response with CSV file
+                output.seek(0)
+                return send_file(
+                    StringIO(output.getvalue()),
+                    mimetype='text/csv',
+                    as_attachment=True,
+                    download_name=f'results_{batch_id}.csv'
+                )
+                
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+            
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -432,7 +463,7 @@ def get_employee_count():
 # Configure Redis connection
 redis_host = os.getenv('REDIS_HOST', 'localhost')
 redis_port = int(os.getenv('REDIS_PORT', 6379))
-redis_password = os.getenv('REDIS_PASSWORD')  
+redis_password = os.getenv('REDIS_PASSWORD')
 
 try:
     # Try connecting to Redis with authentication if password is provided
@@ -454,15 +485,17 @@ try:
     # Test the connection
     redis_client.ping()
     print(f"Successfully connected to Redis at {redis_host}:{redis_port}")
+    using_redis = True
+    # Configure RQ queue
+    queue = Queue(connection=redis_client)
 except redis.ConnectionError as e:
     print(f"Failed to connect to Redis: {e}")
     # Fallback to using local memory if Redis is not available
     from fakeredis import FakeRedis
     redis_client = FakeRedis(decode_responses=True)
     print("Using in-memory Redis mock for local development")
-
-# Configure RQ queue
-queue = Queue(connection=redis_client)
+    using_redis = False
+    queue = None
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
