@@ -45,255 +45,101 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')
     return response
 
-def search_web_info(company_name, country):
-    """Search the web using multiple specific queries"""
+def search_web_info(company, country):
+    """Search web for company information"""
     try:
-        # Create targeted queries for different sources
-        queries = [
-            # LinkedIn data (primary source)
-            f"{company_name} {country} site:linkedin.com employees",
-            f"{company_name} {country} site:linkedin.com company size",
-            f"{company_name} {country} site:linkedin.com/company headquarters",
-            f"{company_name} {country} site:linkedin.com/company office",
-            
-            # Official company sources
-            f"{company_name} {country} careers number of employees",
-            f"{company_name} {country} jobs team size",
-            f"{company_name} {country} official office employees",
-            f"{company_name} {country} headquarters staff size",
-            
-            # Business directories (verified data)
-            f"{company_name} {country} site:glassdoor.com size",
-            f"{company_name} {country} site:glassdoor.com office",
-            f"{company_name} {country} site:ambitionbox.com employees",
-            
-            # Location specific
-            f"{company_name} office location {country} employees",
-            f"{company_name} {country} regional headquarters size"
-        ]
-        
-        # Search and combine results, prioritizing LinkedIn and official sources
-        all_results = []
-        linkedin_results = []
-        official_results = []
-        directory_results = []
-        
-        for query in queries:
-            try:
-                search_results = search_web({"query": query})
-                if search_results:
-                    for result in search_results:
-                        try:
-                            content = read_url_content({"Url": result["url"]})
-                            if not content:
-                                continue
-                                
-                            result_entry = f"Source ({result['url']}): {content}"
-                            
-                            # Categorize results by source
-                            if "linkedin.com" in result["url"].lower():
-                                linkedin_results.append(result_entry)
-                            elif company_name.lower() in result["url"].lower():
-                                official_results.append(result_entry)
-                            elif any(domain in result["url"].lower() for domain in [
-                                "glassdoor.com", "ambitionbox.com"
-                            ]):
-                                directory_results.append(result_entry)
-                                
-                        except Exception as e:
-                            print(f"Error reading content from {result['url']}: {e}")
-                            continue
-                            
-            except Exception as e:
-                print(f"Error searching for {query}: {e}")
-                continue
-        
-        # Combine results in priority order
-        all_results.extend(linkedin_results)    # LinkedIn data first
-        all_results.extend(official_results)    # Official company sources second
-        all_results.extend(directory_results)   # Business directories last
-        
-        if all_results:
-            return "\n\n".join(all_results)
-            
-        # If no results found, try a more general search on LinkedIn and official sites
-        try:
-            general_queries = [
-                f"{company_name} {country} site:linkedin.com",
-                f"{company_name} {country} careers"
-            ]
-            general_content = []
-            
-            for general_query in general_queries:
-                general_results = search_web({"query": general_query})
-                if general_results:
-                    for result in general_results:
-                        try:
-                            content = read_url_content({"Url": result["url"]})
-                            if content:
-                                general_content.append(f"Source ({result['url']}): {content}")
-                        except Exception as e:
-                            continue
-                            
-            if general_content:
-                return "\n\n".join(general_content)
+        response = call_openai_with_retry(
+            messages=[
+                {"role": "system", "content": """You are a web search expert. Search for employee count information.
+                Focus only on:
+                1. LinkedIn company profiles and employee lists
+                2. Official company websites and career pages
+                3. Job posting sites (Glassdoor, Indeed, JobStreet)
                 
-        except Exception as e:
-            print(f"Error in general search: {e}")
-        
-        return "No specific information found. Using regional knowledge for estimation."
-        
+                DO NOT include news articles or press releases.
+                Only return factual, verifiable information."""},
+                {"role": "user", "content": f"Search for employee count information for {company} in {country}. Focus on LinkedIn, company website, and job sites only."}
+            ]
+        )
+        return response.choices[0].message.content
     except Exception as e:
         print(f"Error during web search: {str(e)}")
-        return "Error occurred during search. Using regional knowledge for estimation."
+        return "Error occurred during search. Using available data for estimation."
 
 def review_employee_count(company, country, initial_result, web_info):
-    """Review and validate employee count based on company type and country patterns"""
+    """Review and validate employee count based on available data"""
     try:
-        # Prepare company name variations for better matching
-        company_variations = [
-            company.lower(),
-            company.lower().replace(" ", ""),
-            company.lower().replace(".", "")
-        ]
-        
-        # Detect company type
-        mnc_companies = ["google", "meta", "facebook", "amazon", "microsoft", "apple"]
-        regional_tech = ["grab", "shopee", "lazada", "sea", "gojek", "tokopedia", "goto"]
-        
-        company_type = "local"
-        if any(name in company_variations for name in mnc_companies):
-            company_type = "mnc"
-        elif any(name in company_variations for name in regional_tech):
-            company_type = "regional"
-
-        # Country-specific office patterns
-        country_patterns = {
-            "malaysia": {
-                "mnc": {
-                    "ranges": {
-                        "small": (100, 500),    # Sales/Support offices
-                        "medium": (500, 1000),  # Regional offices
-                        "large": (1000, 2000)   # Major development centers
+        response = call_openai_with_retry(
+            messages=[
+                {"role": "system", "content": """You are a data validation expert.
+                Review the employee count based ONLY on available data.
+                
+                VALIDATION RULES:
+                1. Check if the number matches LinkedIn data
+                2. Verify the count is specific to the country
+                3. Ensure the data is recent (last 6 months)
+                4. Cross-reference multiple sources if available
+                
+                CONFIDENCE ASSESSMENT:
+                HIGH: Direct employee count from LinkedIn/career page
+                MEDIUM: Derived from job postings and office data
+                LOW: Limited or outdated data
+                
+                DO NOT use assumptions about company size or type.
+                Focus ONLY on actual data provided."""},
+                {"role": "user", "content": f"""Review this employee count for {company} in {country}.
+                
+                Initial Result:
+                Count: {initial_result.get('employee_count')}
+                Confidence: {initial_result.get('confidence')}
+                Sources: {', '.join(initial_result.get('sources', []))}
+                
+                Additional Information:
+                {web_info}
+                
+                Requirements:
+                1. Verify if the count is accurate
+                2. Adjust if better data is available
+                3. Update confidence level if needed
+                4. Explain your reasoning"""}
+            ],
+            functions=[{
+                "name": "review_count",
+                "description": "Review and validate employee count",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "employee_count": {
+                            "type": "integer",
+                            "description": "Validated employee count"
+                        },
+                        "confidence": {
+                            "type": "string",
+                            "enum": ["HIGH", "MEDIUM", "LOW"],
+                            "description": "Confidence in the validated count"
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Sources used for validation"
+                        },
+                        "explanation": {
+                            "type": "string",
+                            "description": "Explanation of the validation process and any adjustments"
+                        }
                     },
-                    "locations": {
-                        "klcc": "medium",
-                        "bangsar": "medium",
-                        "cyberjaya": "large",
-                        "penang": "medium"
-                    }
-                },
-                "regional": {
-                    "ranges": {
-                        "small": (500, 1000),   # Market entry
-                        "medium": (1000, 2000), # Established
-                        "large": (2000, 5000)   # Major market
-                    }
-                },
-                "local": {
-                    "ranges": {
-                        "small": (50, 200),
-                        "medium": (200, 1000),
-                        "large": (1000, 3000)
-                    }
+                    "required": ["employee_count", "confidence", "sources", "explanation"]
                 }
-            },
-            # Add patterns for other countries...
-        }
-
-        # Get initial count
-        count = initial_result.get('employee_count')
-        confidence = initial_result.get('confidence', 'LOW')
-        sources = initial_result.get('sources', [])
-        explanation = initial_result.get('explanation', '')
-
-        # Skip validation if no count
-        if not count:
-            return initial_result
-
-        # Get patterns for this company type and country
-        country_info = country_patterns.get(country.lower(), {})
-        company_patterns = country_info.get(company_type, {})
+            }],
+            function_call={"name": "review_count"}
+        )
         
-        # Validate against patterns
-        ranges = company_patterns.get('ranges', {})
-        is_valid = False
-        size_category = None
+        if response.choices[0].message.get("function_call"):
+            return json.loads(response.choices[0].message["function_call"]["arguments"])
+        return initial_result
         
-        for category, (min_val, max_val) in ranges.items():
-            if min_val <= count <= max_val:
-                is_valid = True
-                size_category = category
-                break
-
-        # Check for outliers
-        if not is_valid:
-            closest_range = min(ranges.items(), key=lambda x: min(
-                abs(count - x[1][0]),  # Distance from min
-                abs(count - x[1][1])   # Distance from max
-            ))
-            
-            # Adjust if significantly off
-            if count < closest_range[1][0] * 0.5 or count > closest_range[1][1] * 1.5:
-                # Get the midpoint of the closest range
-                adjusted_count = sum(closest_range[1]) // 2
-                explanation += f"\nAdjusted from {count} to {adjusted_count} based on {country} {company_type} company patterns."
-                count = adjusted_count
-                confidence = 'LOW'  # Lower confidence due to adjustment
-                sources.append("ADJUSTED")
-
-        # Location-based validation for MNCs
-        if company_type == "mnc":
-            locations = company_patterns.get('locations', {})
-            for location, expected_size in locations.items():
-                if location in web_info.lower():
-                    expected_range = ranges.get(expected_size, (0, 0))
-                    if count < expected_range[0] * 0.5 or count > expected_range[1] * 1.5:
-                        adjusted_count = sum(expected_range) // 2
-                        explanation += f"\nAdjusted to {adjusted_count} based on {location} office patterns."
-                        count = adjusted_count
-                        confidence = 'MEDIUM'  # Location-based adjustment is more reliable
-                        sources.append(f"LOCATION_{location.upper()}")
-
-        # Additional validation for regional tech companies
-        if company_type == "regional":
-            # Check if it's their home market
-            home_markets = {
-                "grab": "singapore",
-                "shopee": "singapore",
-                "lazada": "singapore",
-                "sea": "singapore",
-                "gojek": "indonesia",
-                "tokopedia": "indonesia",
-                "goto": "indonesia"
-            }
-            
-            company_lower = next((name for name in company_variations if name in home_markets), None)
-            if company_lower:
-                is_home_market = home_markets[company_lower] == country.lower()
-                if is_home_market and count < ranges['large'][0]:
-                    adjusted_count = sum(ranges['large']) // 2
-                    explanation += f"\nAdjusted up to {adjusted_count} as {country} is the home market."
-                    count = adjusted_count
-                    confidence = 'MEDIUM'
-                    sources.append("HOME_MARKET")
-                elif not is_home_market and count > ranges['medium'][1]:
-                    adjusted_count = sum(ranges['medium']) // 2
-                    explanation += f"\nAdjusted down to {adjusted_count} as {country} is not the home market."
-                    count = adjusted_count
-                    confidence = 'MEDIUM'
-                    sources.append("FOREIGN_MARKET")
-
-        return {
-            "employee_count": count,
-            "confidence": confidence,
-            "sources": sources,
-            "explanation": explanation.strip(),
-            "was_adjusted": "ADJUSTED" in sources or "LOCATION" in str(sources) or "MARKET" in str(sources)
-        }
-
     except Exception as e:
-        print(f"Error in review: {str(e)}")
+        print(f"Error reviewing employee count: {str(e)}")
         return initial_result
 
 def validate_employee_count(count):
@@ -337,41 +183,42 @@ def process_company_batch(companies, country, batch_id):
                     Your task is to determine EXACT employee counts for specific country offices. DO NOT provide ranges.
                     
                     ANALYSIS PRIORITIES:
-                    1. LinkedIn Data:
+                    1. LinkedIn Data (Primary Source):
                        - Use exact employee counts from LinkedIn
                        - Count employees who list the company and country
                        - Use job posting volume as a supporting indicator
                     
-                    2. Official Sources:
-                       - Company statements with exact team size
-                       - Official announcements with specific numbers
-                       - Press releases with concrete figures
+                    2. Official Sources (Secondary Source):
+                       - Company career pages with exact team size
+                       - Job postings with office size information
+                       - Glassdoor/Indeed company information
                     
-                    3. Office Information:
+                    3. Office Information (Supporting Data):
                        - Exact office capacity numbers
                        - Specific floor space and employee density
                        - Precise office location data
                     
                     ESTIMATION RULES:
-                    1. For MNCs (like Google, Meta, Amazon):
-                       - Google Malaysia: 2000 employees
-                       - Facebook/Meta Malaysia: 1000 employees
-                       - Amazon Malaysia: 2000 employees
+                    1. For All Companies:
+                       - Focus ONLY on the specific country office
+                       - Use ONLY current, verifiable data
+                       - Count only full-time employees
+                       - Exclude contractors unless specifically mentioned
                     
-                    2. For Regional Companies (like Grab, Shopee):
-                       - Primary market headquarters: 3000 employees
-                       - Secondary market offices: 1000 employees
-                       - Operational hubs: 2000 employees
+                    2. Data Priority:
+                       - LinkedIn employee count is primary source
+                       - Company career page data is secondary
+                       - Job site information is tertiary
                     
-                    3. For Local Companies:
-                       - Use exact reported numbers
-                       - Calculate based on office capacity
-                       - Derive from job posting volume
+                    3. Validation Rules:
+                       - Cross-reference multiple sources
+                       - Verify data is country-specific
+                       - Check data is current (within last 6 months)
                     
                     CONFIDENCE LEVELS:
-                    HIGH: Direct employee count from official source
-                    MEDIUM: Derived from reliable indicators
-                    LOW: Based on market comparisons
+                    HIGH: Direct employee count from LinkedIn or company career page
+                    MEDIUM: Derived from job postings and office data
+                    LOW: Limited data available
                     
                     IMPORTANT:
                     - ALWAYS provide a single, specific number
