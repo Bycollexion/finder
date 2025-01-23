@@ -12,7 +12,7 @@ import time
 from werkzeug.middleware.proxy_fix import ProxyFix
 import time
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
-from openai.error import RateLimitError
+from openai.error import RateLimitError, APIError
 import redis
 from rq import Queue
 from rq.job import Job
@@ -318,9 +318,9 @@ def process_company_batch(companies, country, batch_id):
 
 @app.route('/')
 def index():
-    """Basic health check endpoint"""
+    """Basic health check endpoint - doesn't check OpenAI"""
     try:
-        # Check Redis connection
+        # Only check Redis connection
         if using_redis:
             redis_client.ping()
             redis_status = "connected"
@@ -341,8 +341,40 @@ def index():
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint"""
-    return index()
+    """Full health check endpoint - includes OpenAI check"""
+    try:
+        # Check Redis
+        redis_status = "not checked"
+        if using_redis:
+            redis_client.ping()
+            redis_status = "connected"
+        else:
+            redis_status = "using fallback"
+
+        # Check OpenAI - simple completion
+        openai_status = "not checked"
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=5
+            )
+            openai_status = "connected"
+        except Exception as e:
+            openai_status = f"error: {str(e)}"
+
+        return jsonify({
+            "status": "healthy",
+            "time": time.time(),
+            "redis": redis_status,
+            "openai": openai_status
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "time": time.time()
+        }), 500
 
 @app.route('/api/countries', methods=['GET'])
 def get_countries():
@@ -366,43 +398,33 @@ def get_countries():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-def handle_rate_limit(retry_state):
-    """Handle rate limit by waiting the suggested time"""
-    exception = retry_state.outcome.exception()
-    if hasattr(exception, 'headers'):
-        reset_time = int(exception.headers.get('x-ratelimit-reset-tokens', 1))
-        print(f"Rate limit reached. Waiting {reset_time} seconds...")
-        time.sleep(reset_time)
-    else:
-        # Default wait time if header not present
-        time.sleep(1)
-    return None
-
 @retry(
-    retry=retry_if_exception_type(RateLimitError),
-    wait=wait_exponential(multiplier=1, min=4, max=10),
-    stop=stop_after_attempt(3),
-    after=handle_rate_limit
+    retry=retry_if_exception_type((RateLimitError, APIError)),
+    wait=wait_exponential(multiplier=1, min=4, max=60),  # Wait between 4-60 seconds
+    stop=stop_after_attempt(5)  # Try 5 times
 )
 def call_openai_with_retry(messages, functions=None, function_call=None):
     """Make OpenAI API call with retry logic"""
     try:
-        kwargs = {
-            "model": "gpt-4",
-            "messages": messages,
-        }
         if functions:
-            kwargs["functions"] = functions
-        if function_call:
-            kwargs["function_call"] = function_call
-            
-        return openai.ChatCompletion.create(**kwargs)
+            return openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=messages,
+                functions=functions,
+                function_call=function_call
+            )
+        return openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=messages
+        )
     except RateLimitError as e:
         print(f"Rate limit error: {str(e)}")
-        raise  # Re-raise for retry mechanism
-    except Exception as e:
-        print(f"Error calling OpenAI API: {str(e)}")
-        raise
+        print("Rate limit reached. Waiting before retry...")
+        raise  # Let retry handle it
+    except APIError as e:
+        print(f"API error: {str(e)}")
+        print("API error occurred. Waiting before retry...")
+        raise  # Let retry handle it
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
