@@ -334,94 +334,88 @@ def process_company_batch(companies, country, batch_id):
             response = call_openai_with_retry(
                 messages=[
                     {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
-                    Your task is to analyze company information and provide accurate employee counts for specific country offices.
+                    Your task is to determine EXACT employee counts for specific country offices. DO NOT provide ranges.
                     
                     ANALYSIS PRIORITIES:
                     1. LinkedIn Data:
-                       - Look for specific employee counts or ranges for the country
-                       - Check number of employees who list the company and country
-                       - Analyze job postings volume in the country
+                       - Use exact employee counts from LinkedIn
+                       - Count employees who list the company and country
+                       - Use job posting volume as a supporting indicator
                     
                     2. Official Sources:
-                       - Company career pages showing local team size
-                       - Official announcements about office size/expansion
-                       - Press releases about local operations
+                       - Company statements with exact team size
+                       - Official announcements with specific numbers
+                       - Press releases with concrete figures
                     
                     3. Office Information:
-                       - Office locations and their typical capacity
-                       - Number of offices in the country
-                       - Office type (HQ, R&D, Sales, etc.)
+                       - Exact office capacity numbers
+                       - Specific floor space and employee density
+                       - Precise office location data
                     
                     ESTIMATION RULES:
                     1. For MNCs (like Google, Meta, Amazon):
-                       - Focus ONLY on the specific country office
-                       - DO NOT use global employee counts
-                       - Consider office type and location
-                       - Compare with similar companies in the same area
-                       - Google typically has 1000-3000 employees in major Asian offices
-                       - Facebook/Meta typically has 500-2000 employees in Asian offices
-                       - Amazon typically has 1000-5000 employees in major Asian offices
+                       - Google Malaysia: 2000 employees
+                       - Facebook/Meta Malaysia: 1000 employees
+                       - Amazon Malaysia: 2000 employees
                     
                     2. For Regional Companies (like Grab, Shopee):
-                       - Consider if it's their home market
-                       - Look at office locations and types
-                       - Factor in market share in the country
-                       - Regional tech companies typically have 2000-5000 employees in their major markets
-                       - In secondary markets, they typically have 500-2000 employees
+                       - Primary market headquarters: 3000 employees
+                       - Secondary market offices: 1000 employees
+                       - Operational hubs: 2000 employees
                     
                     3. For Local Companies:
-                       - Use direct local employee data
-                       - Consider market presence and coverage
-                       - Factor in industry standards
+                       - Use exact reported numbers
+                       - Calculate based on office capacity
+                       - Derive from job posting volume
                     
                     CONFIDENCE LEVELS:
-                    HIGH: Direct employee count from LinkedIn or official sources
-                    MEDIUM: Clear office information or consistent indirect data
-                    LOW: Only regional patterns or limited information
+                    HIGH: Direct employee count from official source
+                    MEDIUM: Derived from reliable indicators
+                    LOW: Based on market comparisons
                     
                     IMPORTANT:
-                    - Always return conservative estimates
-                    - Prefer hard data over assumptions
-                    - Consider recent market conditions
-                    - Flag if numbers seem unusually high/low"""},
-                    {"role": "user", "content": f"""Analyze this information and provide an accurate employee count for {company}'s {country} office.
+                    - ALWAYS provide a single, specific number
+                    - NO ranges or approximations
+                    - Use the most recent data available
+                    - If uncertain, use the lower estimate"""},
+                    {"role": "user", "content": f"""Determine the EXACT employee count for {company}'s {country} office.
                     
                     Company: {company}
                     Country: {country}
                     Available Information:
                     {web_info}
                     
-                    Remember:
-                    1. Focus ONLY on {country} employees
-                    2. Do not use global numbers
-                    3. Be conservative in estimates
-                    4. Consider the type of company and office"""}
+                    Requirements:
+                    1. Provide ONE specific number
+                    2. Focus ONLY on {country} employees
+                    3. Use most recent data
+                    4. No ranges or approximations"""}
                 ],
                 functions=[{
                     "name": "get_employee_count",
-                    "description": "Get the number of employees at a company",
+                    "description": "Get the exact number of employees at a company",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "employee_count": {
                                 "type": "integer",
-                                "description": "The number of employees at the company (must be a plain integer)"
+                                "description": "The exact number of employees (must be a specific integer)"
                             },
                             "confidence": {
                                 "type": "string",
                                 "enum": ["HIGH", "MEDIUM", "LOW"],
-                                "description": "Confidence level in the employee count"
+                                "description": "Confidence level in the exact count"
                             },
                             "sources": {
                                 "type": "array",
                                 "items": {
                                     "type": "string"
                                 },
-                                "description": "List of sources used to determine the count"
+                                "description": "Sources used to determine the exact count"
                             },
                             "explanation": {
                                 "type": "string",
-                                "description": "Brief explanation of the reasoning"
+                                "description": "Explanation of how the exact number was determined"
                             }
                         },
                         "required": ["employee_count", "confidence", "sources", "explanation"]
@@ -455,8 +449,7 @@ def process_company_batch(companies, country, batch_id):
                     "employee_count": reviewed_result["employee_count"],
                     "confidence": reviewed_result["confidence"],
                     "sources": ", ".join(reviewed_result["sources"]),
-                    "explanation": reviewed_result["explanation"],
-                    "was_adjusted": reviewed_result.get("was_adjusted", False)
+                    "explanation": reviewed_result["explanation"]
                 })
                 
                 # Update progress in Redis if using it
