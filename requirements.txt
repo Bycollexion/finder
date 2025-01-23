@@ -1,11 +1,8 @@
 Flask==2.0.1
 Flask-CORS==3.0.10
-gunicorn==20.1.0
-Werkzeug==2.0.1
 openai==0.28.1
-requests==2.31.0
-tenacity==8.2.3
 redis==5.0.1
 rq==1.15.1
-fakeredis==2.20.0
-google-api-python-client==2.108.0
+requests==2.31.0
+tenacity==8.2.3
+Werkzeug==2.0.1
