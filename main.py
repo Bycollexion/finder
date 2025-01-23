@@ -14,10 +14,8 @@ from bs4 import BeautifulSoup
 import time
 import random
 import traceback
-import googlesearch
-import json
-from googlesearch import search as google_search
-import time
+import duckduckgo_search
+from duckduckgo_search import DDGS
 from functools import lru_cache
 
 # Configure logging
@@ -52,22 +50,17 @@ MIN_SEARCH_DELAY = 2  # Minimum seconds between searches
 @lru_cache(maxsize=100)
 def cached_web_search(query):
     """Cached version of web search to avoid repeated calls"""
-    global last_search_time
-    
-    # Rate limiting
-    current_time = time.time()
-    time_since_last = current_time - last_search_time
-    if time_since_last < MIN_SEARCH_DELAY:
-        time.sleep(MIN_SEARCH_DELAY - time_since_last)
-    
     try:
         results = []
-        search_results = google_search(query, num_results=5, lang="en")
-        for url in search_results:
-            if isinstance(url, str):
-                results.append({"url": url})
+        with DDGS() as ddgs:
+            search_results = list(ddgs.text(query, max_results=5))
+            for result in search_results:
+                results.append({
+                    "url": result["link"],
+                    "title": result["title"],
+                    "snippet": result["body"]
+                })
         logger.debug(f"Search for '{query}' found {len(results)} results")
-        last_search_time = time.time()
         return results
     except Exception as e:
         logger.error(f"Error in web search: {str(e)}")
@@ -127,30 +120,39 @@ def search_web_info(company, country):
         for query in search_queries:
             results = cached_web_search(query)
             for result in results:
-                content = cached_web_content(result['url'])
-                if not content or company.lower() not in content.lower() or country.lower() not in content.lower():
+                # First check if the snippet contains relevant info
+                if company.lower() not in result['snippet'].lower() or country.lower() not in result['snippet'].lower():
                     continue
+                    
+                # Then fetch full content if needed
+                content = cached_web_content(result['url'])
+                if not content:
+                    content = result['snippet']  # Use snippet if can't fetch full content
                     
                 # Categorize the result
                 if "linkedin.com" in result['url'].lower():
                     all_data["linkedin_data"].append({
                         "source": result['url'],
-                        "content": content
+                        "content": content,
+                        "title": result['title']
                     })
                 elif "job" in result['url'].lower() or "career" in result['url'].lower():
                     all_data["hiring_data"].append({
                         "source": result['url'],
-                        "content": content
+                        "content": content,
+                        "title": result['title']
                     })
                 elif "news" in result['url'].lower():
                     all_data["news_data"].append({
                         "source": result['url'],
-                        "content": content
+                        "content": content,
+                        "title": result['title']
                     })
                 else:
                     all_data["employee_counts"].append({
                         "source": result['url'],
-                        "content": content
+                        "content": content,
+                        "title": result['title']
                     })
         
         # Format data for OpenAI
@@ -159,12 +161,12 @@ def search_web_info(company, country):
             if items:
                 formatted_text += f"\n{category.replace('_', ' ').title()}:\n"
                 for item in items:
-                    formatted_text += f"Source: {item['source']}\n{item['content']}\n"
+                    formatted_text += f"Source: {item['source']}\nTitle: {item['title']}\n{item['content']}\n"
         
         logger.debug(f"Found data for {company}:")
         for category, items in all_data.items():
             logger.debug(f"- {category}: {len(items)} items")
-        
+            
         # Ask OpenAI to analyze all the data
         messages = [
             {
