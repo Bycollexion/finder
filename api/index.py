@@ -3,8 +3,6 @@ import json
 import os
 import logging
 import requests
-from flask import Flask, jsonify
-from flask_cors import CORS
 import pandas as pd
 import openai
 import re
@@ -17,10 +15,6 @@ import traceback
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-# Initialize Flask app
-app = Flask(__name__)
-CORS(app)
 
 # Configure OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -254,75 +248,66 @@ def get_countries():
 
 def handle_request(path, method='GET', body=None):
     """Handle incoming requests"""
-    if path == '/api/countries' and method == 'GET':
-        return {
-            'statusCode': 200,
-            'body': json.dumps(get_countries())
-        }
-    elif path == '/api/process' and method == 'POST':
-        try:
-            # Process the CSV data
-            data = json.loads(body)
-            if not data or 'data' not in data:
-                return {
-                    'statusCode': 400,
-                    'body': json.dumps({"error": "No CSV data provided"})
-                }
+    try:
+        if path == '/api/countries' and method == 'GET':
+            return {
+                'statusCode': 200,
+                'body': json.dumps(get_countries())
+            }
+        elif path == '/api/process' and method == 'POST':
+            try:
+                # Process the CSV data
+                data = json.loads(body)
+                if not data or 'data' not in data:
+                    return {
+                        'statusCode': 400,
+                        'body': json.dumps({"error": "No CSV data provided"})
+                    }
 
-            # Parse CSV data and process it
-            rows = []
-            for line in data['data'].split('\n'):
-                if line.strip():  # Skip empty lines
-                    rows.append(line.split(','))
+                # Parse CSV data and process it
+                rows = []
+                for line in data['data'].split('\n'):
+                    if line.strip():  # Skip empty lines
+                        rows.append(line.split(','))
 
-            # Process each company
-            results = []
-            for i, row in enumerate(rows[1:], 1):  # Skip header row
-                if len(row) >= 2:
-                    company = row[0].strip()
-                    country = row[1].strip().lower()
-                    
-                    logger.info(f"Processing {company} ({country}) - {i}/{len(rows)-1}")
-                    
-                    result = search_web_info(company, country)
-                    if result:
-                        results.append(result)
-                    
-                    # Add a small delay between requests
-                    time.sleep(random.uniform(1, 2))
+                # Process each company
+                results = []
+                for i, row in enumerate(rows[1:], 1):  # Skip header row
+                    if len(row) >= 2:
+                        company = row[0].strip()
+                        country = row[1].strip().lower()
+                        
+                        logger.info(f"Processing {company} ({country}) - {i}/{len(rows)-1}")
+                        
+                        result = search_web_info(company, country)
+                        if result:
+                            results.append(result)
+                        
+                        # Add a small delay between requests
+                        time.sleep(random.uniform(1, 2))
 
-            # Create output CSV
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = f"employee_counts_{timestamp}.csv"
-            
-            with open(output_file, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=["Company", "Employee Count", "Confidence"])
-                writer.writeheader()
-                writer.writerows(results)
-            
-            logger.debug(f"Created output file: {output_file} ({os.path.getsize(output_file)} bytes)")
-            
-            # Return the file
-            logger.info("Preparing file download...")
-            with open(output_file, 'rb') as f:
+                # Return the results
                 return {
                     'statusCode': 200,
-                    'body': f.read(),
-                    'headers': {
-                        'Content-Type': 'text/csv',
-                        'Content-Disposition': f'attachment; filename="{output_file}"'
-                    }
+                    'body': json.dumps(results)
                 }
-        except Exception as e:
-            logger.error(f"Error processing file: {str(e)}\n{traceback.format_exc()}")
+
+            except Exception as e:
+                logger.error(f"Error processing file: {str(e)}\n{traceback.format_exc()}")
+                return {
+                    'statusCode': 500,
+                    'body': json.dumps({"error": str(e)})
+                }
+        else:
             return {
-                'statusCode': 500,
-                'body': json.dumps({"error": str(e)})
+                'statusCode': 404,
+                'body': json.dumps({"error": "Not found"})
             }
-    else:
+    except Exception as e:
+        logger.error(f"Error handling request: {str(e)}\n{traceback.format_exc()}")
         return {
-            'statusCode': 404,
-            'body': json.dumps({"error": "Not found"})
+            'statusCode': 500,
+            'body': json.dumps({"error": str(e)})
         }
 
 class handler(BaseHTTPRequestHandler):
@@ -341,9 +326,6 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(response['statusCode'])
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
-        if 'headers' in response:
-            for key, value in response['headers'].items():
-                self.send_header(key, value)
         self.end_headers()
         self.wfile.write(response['body'].encode())
 
