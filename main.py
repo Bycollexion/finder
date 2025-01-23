@@ -76,31 +76,33 @@ def search_web_info(company, country):
                 "role": "system",
                 "content": f"""You are an expert at finding employee counts for company offices. 
                 Search for information about {company}'s office in {country}.
+                DO NOT give instructions on how to search. Instead, ACTUALLY SEARCH and provide the data you find.
+                
                 Focus on:
-                1. Direct employee counts for the {country} office
-                2. LinkedIn data about employees in {country}
-                3. Recent news about office size/expansion in {country}
-                4. Job postings and hiring information in {country}
-
+                1. Employee counts specifically for the {country} office location
+                2. Recent office openings, expansions, or downsizing in {country}
+                3. Job postings and hiring trends in {country}
+                4. News articles about {company}'s presence in {country}
+                5. Industry reports or government data about {company} in {country}
+                
                 Format your response as:
-                Employee Counts:
-                [List specific numbers found with sources]
-
-                LinkedIn Data:
-                [Summary of LinkedIn information]
-
-                News:
-                [Relevant news about office size]
-
+                Employee Count:
+                [Exact numbers found with dates and sources]
+                
+                Office Info:
+                [Details about office location, size, expansions]
+                
+                Recent News:
+                [News about presence in {country}]
+                
                 Hiring:
-                [Information about current hiring]
-
-                Be specific to {country} office, not global numbers.
-                Include URLs for sources when available."""
+                [Current job openings and trends]
+                
+                Be specific to {country} office only. If you find conflicting numbers, explain which is most reliable."""
             },
             {
                 "role": "user",
-                "content": f"How many employees does {company} have in their {country} office? Search the web and analyze the data."
+                "content": f"Find employee count and office information for {company} in {country}. Search thoroughly and provide specific numbers and sources."
             }
         ]
 
@@ -120,31 +122,33 @@ def search_web_info(company, country):
                 "role": "system",
                 "content": f"""You are an expert at estimating employee counts for company offices.
                 Analyze the provided data about {company}'s office in {country}.
-                Return ONLY a number representing your best estimate of employees in the {country} office.
-                If you find a specific number from a reliable source, use that.
-                Otherwise, estimate based on available data.
-                Must be specific to {country} office, not global numbers.
                 
                 Rules:
-                1. Return ONLY a number, no text
-                2. Numbers should be between 20-50,000
-                3. If no reliable data, estimate based on office size/type
-                4. Prefer recent data over old
-                5. Local office numbers only, not global
+                1. If you find a specific recent number with a reliable source, use that
+                2. If you find a range, use the middle value
+                3. If you find historical numbers, adjust them based on company growth
+                4. If no exact numbers, estimate based on:
+                   - Office size and location
+                   - Number of job postings
+                   - Industry standards for similar companies
+                   - Recent news about expansion/contraction
+                5. Return ONLY a number between 20-50,000
+                6. If truly no data suggests a presence in {country}, return 0
                 
-                Example good responses:
-                250
-                1500
+                Example responses:
+                250  (when you find a specific number)
+                1500 (when estimating based on good data)
+                0    (when no presence found)
                 
-                Bad responses (never do these):
+                Never return:
                 "About 250 employees"
                 "250-300 employees"
-                "250 globally"
+                "Unknown"
                 """
             },
             {
                 "role": "user",
-                "content": f"Based on this data, estimate employees in {company}'s {country} office:\n{web_data}"
+                "content": f"Based on this data, what is the most accurate estimate for {company}'s employee count in {country}:\n{web_data}"
             }
         ]
 
@@ -156,13 +160,21 @@ def search_web_info(company, country):
         )
 
         count = extract_number(response.choices[0].message['content'])
-        confidence = "High" if "Direct Employee Count" in web_data else "Low"
+        confidence = "High" if "Employee Count:" in web_data and any(char.isdigit() for char in web_data) else "Low"
+        
+        if count == "0":
+            logger.info(f"No presence found for {company} in {country}")
+            return {
+                "Company": company,
+                "Employee Count": "0",
+                "Confidence": confidence
+            }
 
         logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
 
         return {
             "Company": company,
-            "Employee Count": count if count else "1000",
+            "Employee Count": count if count else "0",
             "Confidence": confidence
         }
 
@@ -170,7 +182,7 @@ def search_web_info(company, country):
         logger.error(f"Error searching web info: {str(e)}")
         return {
             "Company": company,
-            "Employee Count": "1000",
+            "Employee Count": "0",
             "Confidence": "Low"
         }
 
