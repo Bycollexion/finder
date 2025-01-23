@@ -85,64 +85,47 @@ def search_web_info(company, country):
     try:
         response = call_openai_with_retry(
             messages=[
-                {"role": "system", "content": """You are a web search expert. Search for employee count information.
-                Focus only on:
-                1. LinkedIn company profiles and employee lists
-                2. Official company websites and career pages
-                3. Job posting sites (Glassdoor, Indeed, JobStreet)
+                {"role": "system", "content": """You are an employee data analyst. Focus ONLY on:
+                1. LinkedIn employee count for the specific country
+                2. Official company website employee count for the country
                 
-                Return information in this format:
+                Return ONLY this JSON format:
                 {
-                    "company": "company name",
-                    "employee_count": "number or range",
+                    "employee_count": "<number or range>",
                     "confidence": "high/medium/low",
-                    "sources": "list of sources",
-                    "status": "success/error",
-                    "explanation": "explanation of the result"
+                    "sources": "LinkedIn/Company Website"
                 }
                 
-                DO NOT include news articles or press releases.
-                Only return factual, verifiable information."""},
-                {"role": "user", "content": f"Search for employee count information for {company} in {country}. Focus on LinkedIn, company website, and job sites only. Return in JSON format."}
+                - If data is from LinkedIn = high confidence
+                - If from company website = medium confidence
+                - If unclear source = low confidence
+                - ALWAYS focus on the specified country only"""},
+                {"role": "user", "content": f"Find employee count for {company} in {country} ONLY. Return JSON."}
             ]
         )
         
         content = response.choices[0].message.content
         try:
-            # Try to parse as JSON first
-            if isinstance(content, str):
-                if content.startswith('{') and content.endswith('}'):
-                    result = json.loads(content)
-                else:
-                    # If not JSON, create a basic result
-                    result = {
-                        "company": company,
-                        "employee_count": "Unknown",
-                        "confidence": "low",
-                        "sources": "GPT response",
-                        "status": "partial",
-                        "explanation": content
-                    }
+            if isinstance(content, str) and content.startswith('{'):
+                result = json.loads(content)
             else:
-                result = content
-                
-            # Ensure all required fields are present
-            required_fields = ["company", "employee_count", "confidence", "sources", "status", "explanation"]
-            for field in required_fields:
-                if field not in result:
-                    result[field] = ""
-                    
+                result = {
+                    "employee_count": "Unknown",
+                    "confidence": "low",
+                    "sources": "No reliable data"
+                }
+            
+            result["company"] = company
+            result["status"] = "success"
             return result
             
         except json.JSONDecodeError:
-            # If JSON parsing fails, return structured error
             return {
                 "company": company,
                 "employee_count": "Unknown",
                 "confidence": "low",
-                "sources": "Error parsing GPT response",
-                "status": "error",
-                "explanation": content
+                "sources": "Error parsing response",
+                "status": "error"
             }
             
     except Exception as e:
@@ -153,17 +136,14 @@ def search_web_info(company, country):
                 "employee_count": "Unknown",
                 "confidence": "none",
                 "sources": "API quota exceeded",
-                "status": "error",
-                "error": "API quota exceeded. Please try again later."
+                "status": "error"
             }
-        print(f"Error during web search: {error_msg}")
         return {
             "company": company,
             "employee_count": "Unknown",
             "confidence": "none",
             "sources": "Error occurred",
-            "status": "error",
-            "error": f"Error occurred during search: {error_msg}"
+            "status": "error"
         }
 
 def review_employee_count(company, country, initial_result, web_info):
@@ -171,78 +151,30 @@ def review_employee_count(company, country, initial_result, web_info):
     try:
         response = call_openai_with_retry(
             messages=[
-                {"role": "system", "content": """You are a data validation expert.
-                Review the employee count based ONLY on available data.
+                {"role": "system", "content": """You are a data validator. 
+                ONLY validate if:
+                1. The data matches LinkedIn
+                2. The count is specific to the requested country
                 
-                VALIDATION RULES:
-                1. Check if the number matches LinkedIn data
-                2. Verify the count is specific to the country
-                3. Ensure the data is recent (last 6 months)
-                4. Cross-reference multiple sources if available
-                
-                CONFIDENCE ASSESSMENT:
-                HIGH: Direct employee count from LinkedIn/career page
-                MEDIUM: Derived from job postings and office data
-                LOW: Limited or outdated data
-                
-                DO NOT use assumptions about company size or type.
-                Focus ONLY on actual data provided."""},
-                {"role": "user", "content": f"""Review this employee count for {company} in {country}.
-                
-                Initial Result:
-                Count: {initial_result.get('employee_count')}
-                Confidence: {initial_result.get('confidence')}
-                Sources: {', '.join(initial_result.get('sources', []))}
-                
-                Additional Information:
-                {web_info}
-                
-                Requirements:
-                1. Verify if the count is accurate
-                2. Adjust if better data is available
-                3. Update confidence level if needed
-                4. Explain your reasoning"""}
-            ],
-            functions=[{
-                "name": "review_count",
-                "description": "Review and validate employee count",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "employee_count": {
-                            "type": "integer",
-                            "description": "Validated employee count"
-                        },
-                        "confidence": {
-                            "type": "string",
-                            "enum": ["HIGH", "MEDIUM", "LOW"],
-                            "description": "Confidence in the validated count"
-                        },
-                        "sources": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Sources used for validation"
-                        },
-                        "explanation": {
-                            "type": "string",
-                            "description": "Explanation of the validation process and any adjustments"
-                        }
-                    },
-                    "required": ["employee_count", "confidence", "sources", "explanation"]
-                }
-            }],
-            function_call={"name": "review_count"}
+                Return ONLY this JSON format:
+                {
+                    "employee_count": "<number or range>",
+                    "confidence": "high/medium/low",
+                    "sources": "<data sources>"
+                }"""},
+                {"role": "user", "content": f"Validate employee count for {company} in {country}. Initial data: {json.dumps(initial_result)}. Web info: {web_info}"}
+            ]
         )
         
-        if response.choices[0].message.get("function_call"):
-            return json.loads(response.choices[0].message["function_call"]["arguments"])
-        return initial_result
-        
-    except Exception as e:
-        error_msg = str(e)
-        if "quota" in error_msg.lower():
+        try:
+            result = json.loads(response.choices[0].message.content)
+            result["company"] = company
+            result["status"] = "success"
+            return result
+        except:
             return initial_result
-        print(f"Error reviewing employee count: {error_msg}")
+            
+    except Exception as e:
         return initial_result
 
 def validate_employee_count(count):
