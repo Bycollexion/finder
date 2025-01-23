@@ -479,57 +479,91 @@ def get_countries():
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
     """Process uploaded file"""
-    if request.method == 'OPTIONS':
-        return handle_preflight()
-
     try:
-        print("Starting file processing...")
+        if request.method == 'OPTIONS':
+            return handle_preflight()
+
+        print(f"Starting file processing... Content-Type: {request.content_type}")
+        print(f"Request headers: {dict(request.headers)}")
         
         # Get file from request
         if 'file' not in request.files:
             print("No file in request.files")
-            return jsonify({"error": "No file provided"}), 400
+            print(f"Form data: {request.form}")
+            print(f"Files: {request.files}")
+            return jsonify({
+                "error": "No file provided",
+                "details": "The request must include a file in multipart/form-data"
+            }), 400
             
         file = request.files['file']
-        if not file:
-            print("File object is empty")
-            return jsonify({"error": "Empty file provided"}), 400
+        if not file or not file.filename:
+            print("File object is empty or has no filename")
+            return jsonify({
+                "error": "Empty file provided",
+                "details": "The uploaded file is empty or has no filename"
+            }), 400
 
         # Get country from request
         country = request.form.get('country')
         if not country:
             print("No country specified")
-            return jsonify({"error": "No country specified"}), 400
+            return jsonify({
+                "error": "No country specified",
+                "details": "Please select a country from the dropdown"
+            }), 400
 
-        print(f"Processing file for country: {country}")
+        print(f"Processing file '{file.filename}' for country: {country}")
 
         try:
             # Read CSV content with explicit encoding
             content = file.read()
             if not content:
                 print("File content is empty")
-                return jsonify({"error": "Empty file content"}), 400
+                return jsonify({
+                    "error": "Empty file content",
+                    "details": "The uploaded file contains no data"
+                }), 400
                 
             try:
                 content = content.decode('utf-8')
             except UnicodeDecodeError:
                 print("Trying alternative encoding...")
-                content = content.decode('utf-8-sig')  # Try with BOM
+                try:
+                    content = content.decode('utf-8-sig')  # Try with BOM
+                except UnicodeDecodeError as e:
+                    return jsonify({
+                        "error": "Invalid file encoding",
+                        "details": "Please ensure the file is saved as UTF-8 encoded CSV"
+                    }), 400
                 
             print(f"Successfully read file content, length: {len(content)}")
             
             # Parse CSV data
-            csv_data = list(csv.reader(StringIO(content)))
+            try:
+                csv_data = list(csv.reader(StringIO(content)))
+            except csv.Error as e:
+                return jsonify({
+                    "error": "Invalid CSV format",
+                    "details": f"CSV parsing error: {str(e)}"
+                }), 400
+
             if len(csv_data) < 2:
                 print("CSV has less than 2 rows")
-                return jsonify({"error": "File is empty or invalid"}), 400
+                return jsonify({
+                    "error": "Invalid CSV format",
+                    "details": "File must contain a header row and at least one data row"
+                }), 400
 
             # Extract company names (skip header)
             companies = [row[0].strip() for row in csv_data[1:] if row and row[0].strip()]
             print(f"Found {len(companies)} companies")
             
             if not companies:
-                return jsonify({"error": "No valid company names found"}), 400
+                return jsonify({
+                    "error": "No valid company names",
+                    "details": "No valid company names found in the first column"
+                }), 400
 
             # Process in smaller batches to avoid timeouts
             batch_size = 5
@@ -576,15 +610,24 @@ def process_file():
             output.seek(0)
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
-            # Create response
+            # Create response with all necessary headers
             response = make_response(output.getvalue())
-            response.headers['Content-Type'] = 'text/csv'
-            response.headers['Content-Disposition'] = f'attachment; filename=employee_counts_{timestamp}.csv'
+            response.headers.update({
+                'Content-Type': 'text/csv',
+                'Content-Disposition': f'attachment; filename=employee_counts_{timestamp}.csv',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Expose-Headers': 'Content-Disposition'
+            })
             return response
 
         except csv.Error as e:
             print(f"CSV parsing error: {str(e)}")
-            return jsonify({"error": f"Invalid CSV format: {str(e)}"}), 400
+            return jsonify({
+                "error": "Invalid CSV format",
+                "details": str(e)
+            }), 400
             
     except Exception as e:
         print(f"Error processing file: {str(e)}")
