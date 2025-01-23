@@ -19,6 +19,7 @@ from rq.job import Job
 import uuid
 from datetime import datetime
 import math
+from googleapiclient.discovery import build
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
@@ -146,6 +147,72 @@ def search_web_info(company_name, country):
     except Exception as e:
         print(f"Error during web search: {str(e)}")
         return "Error occurred during search. Using regional knowledge for estimation."
+
+def search_google_custom(company_name, country):
+    """Search using Google Custom Search API"""
+    try:
+        # Get API key and Search Engine ID from environment variables
+        api_key = os.getenv('GOOGLE_API_KEY')
+        search_id = os.getenv('GOOGLE_SEARCH_ID')
+        
+        if not api_key or not search_id:
+            print("Google API key or Search Engine ID not found")
+            return []
+
+        # Create search queries
+        queries = [
+            # LinkedIn data (primary source)
+            f'"{company_name}" "{country}" employees site:linkedin.com/company',
+            f'"{company_name}" "{country}" "number of employees" site:linkedin.com/company',
+            f'"{company_name}" "{country}" "team size" site:linkedin.com/company',
+            
+            # Career pages and job postings
+            f'"{company_name}" "{country}" careers "join our team"',
+            f'"{company_name}" "{country}" "current openings" "team size"',
+            f'"{company_name}" "{country}" "team of" site:linkedin.com/jobs',
+            
+            # Official sources
+            f'"{company_name}" "{country}" office employees',
+            f'"{company_name}" "{country}" headquarters staff',
+            
+            # Business directories
+            f'"{company_name}" "{country}" employees site:glassdoor.com',
+            f'"{company_name}" "{country}" size site:glassdoor.com'
+        ]
+
+        # Initialize the Custom Search API service
+        service = build("customsearch", "v1", developerKey=api_key)
+
+        all_results = []
+        for query in queries:
+            try:
+                # Execute the search
+                result = service.cse().list(
+                    q=query,
+                    cx=search_id,  # Use the environment variable
+                    num=10  # Number of results per query
+                ).execute()
+
+                # Extract and store relevant information
+                if 'items' in result:
+                    for item in result['items']:
+                        result_data = {
+                            'title': item.get('title', ''),
+                            'snippet': item.get('snippet', ''),
+                            'link': item.get('link', ''),
+                            'source': 'linkedin.com' if 'linkedin.com' in item.get('link', '') else 'other'
+                        }
+                        all_results.append(result_data)
+
+            except Exception as e:
+                print(f"Error searching for query '{query}': {str(e)}")
+                continue
+
+        return all_results
+
+    except Exception as e:
+        print(f"Error in Google Custom Search: {str(e)}")
+        return []
 
 def review_employee_count(company, country, initial_result, web_info):
     """Review and validate employee count based on company type and country patterns"""
@@ -325,139 +392,140 @@ def validate_employee_count(count):
 def process_company_batch(companies, country, batch_id):
     """Process a batch of companies"""
     results = []
+    
     for company in companies:
         try:
             web_info = search_web_info(company, country)
+            google_custom_results = search_google_custom(company, country)
+            analyzed_result = analyze_search_results(company, country, google_custom_results)
             
-            # Initial estimate
-            response = call_openai_with_retry(
-                messages=[
-                    {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
-                    Your task is to analyze company information and provide accurate employee counts for specific country offices.
-                    
-                    ANALYSIS PRIORITIES:
-                    1. LinkedIn Data:
-                       - Look for specific employee counts or ranges for the country
-                       - Check number of employees who list the company and country
-                       - Analyze job postings volume in the country
-                    
-                    2. Official Sources:
-                       - Company career pages showing local team size
-                       - Official announcements about office size/expansion
-                       - Press releases about local operations
-                    
-                    3. Office Information:
-                       - Office locations and their typical capacity
-                       - Number of offices in the country
-                       - Office type (HQ, R&D, Sales, etc.)
-                    
-                    ESTIMATION RULES:
-                    1. For MNCs (like Google, Meta, Amazon):
-                       - Focus ONLY on the specific country office
-                       - DO NOT use global employee counts
-                       - Consider office type and location
-                       - Compare with similar companies in the same area
-                    
-                    2. For Regional Companies (like Grab, Shopee):
-                       - Consider if it's their home market
-                       - Look at office locations and types
-                       - Factor in market share in the country
-                    
-                    3. For Local Companies:
-                       - Use direct local employee data
-                       - Consider market presence and coverage
-                       - Factor in industry standards
-                    
-                    CONFIDENCE LEVELS:
-                    HIGH: Direct employee count from LinkedIn or official sources
-                    MEDIUM: Clear office information or consistent indirect data
-                    LOW: Only regional patterns or limited information
-                    
-                    IMPORTANT:
-                    - Always return conservative estimates
-                    - Prefer hard data over assumptions
-                    - Consider recent market conditions
-                    - Flag if numbers seem unusually high/low"""},
-                    {"role": "user", "content": f"""Analyze this information and provide an accurate employee count for {company}'s {country} office.
-                    
-                    Company: {company}
-                    Country: {country}
-                    Available Information:
-                    {web_info}
-                    
-                    Remember:
-                    1. Focus ONLY on {country} employees
-                    2. Do not use global numbers
-                    3. Be conservative in estimates
-                    4. Consider the type of company and office"""}
-                ],
-                functions=[{
-                    "name": "get_employee_count",
-                    "description": "Get the number of employees at a company",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "employee_count": {
-                                "type": "integer",
-                                "description": "The number of employees at the company (must be a plain integer)"
-                            },
-                            "confidence": {
-                                "type": "string",
-                                "enum": ["HIGH", "MEDIUM", "LOW"],
-                                "description": "Confidence level in the employee count"
-                            },
-                            "sources": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                },
-                                "description": "List of sources used to determine the count"
-                            },
-                            "explanation": {
-                                "type": "string",
-                                "description": "Brief explanation of the reasoning"
-                            }
-                        },
-                        "required": ["employee_count", "confidence", "sources", "explanation"]
-                    }
-                }],
-                function_call={"name": "get_employee_count"}
-            )
-            
-            if response.choices[0].message.get("function_call"):
-                initial_result = json.loads(response.choices[0].message["function_call"]["arguments"])
-                
-                # Validate employee count
-                employee_count = validate_employee_count(initial_result.get("employee_count"))
-                if employee_count is None:
-                    raise ValueError(f"Invalid employee count received for {company}")
-                initial_result["employee_count"] = employee_count
-                
-                # Have GPT-4 review the estimate with country-specific context
-                reviewed_result = review_employee_count(company, country, initial_result, web_info)
-                
-                # Validate reviewed count
-                reviewed_count = validate_employee_count(reviewed_result.get("employee_count"))
-                if reviewed_count is None:
-                    # If review gives invalid count, use original
-                    reviewed_result["employee_count"] = employee_count
-                else:
-                    reviewed_result["employee_count"] = reviewed_count
-                
-                results.append({
-                    "company": company,
-                    "employee_count": reviewed_result["employee_count"],
-                    "confidence": reviewed_result["confidence"],
-                    "sources": ", ".join(reviewed_result["sources"]),
-                    "explanation": reviewed_result["explanation"],
-                    "was_adjusted": reviewed_result.get("was_adjusted", False)
-                })
+            if analyzed_result:
+                initial_result = analyzed_result
             else:
-                results.append({
-                    "company": company,
-                    "error": "Failed to process company information"
-                })
+                # Initial estimate
+                response = call_openai_with_retry(
+                    messages=[
+                        {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
+                        Your task is to analyze company information and provide accurate employee counts for specific country offices.
+                        
+                        ANALYSIS PRIORITIES:
+                        1. LinkedIn Data:
+                           - Look for specific employee counts or ranges for the country
+                           - Check number of employees who list the company and country
+                           - Analyze job postings volume in the country
+                        
+                        2. Official Sources:
+                           - Company career pages showing local team size
+                           - Official announcements about office size/expansion
+                           - Press releases about local operations
+                        
+                        3. Office Information:
+                           - Office locations and their typical capacity
+                           - Number of offices in the country
+                           - Office type (HQ, R&D, Sales, etc.)
+                        
+                        ESTIMATION RULES:
+                        1. For MNCs (like Google, Meta, Amazon):
+                           - Focus ONLY on the specific country office
+                           - DO NOT use global employee counts
+                           - Consider office type and location
+                           - Compare with similar companies in the same area
+                        
+                        2. For Regional Companies (like Grab, Shopee):
+                           - Consider if it's their home market
+                           - Look at office locations and types
+                           - Factor in market share in the country
+                        
+                        3. For Local Companies:
+                           - Use direct local employee data
+                           - Consider market presence and coverage
+                           - Factor in industry standards
+                        
+                        CONFIDENCE LEVELS:
+                        HIGH: Direct employee count from LinkedIn or official sources
+                        MEDIUM: Clear office information or consistent indirect data
+                        LOW: Only regional patterns or limited information
+                        
+                        IMPORTANT:
+                        - Always return conservative estimates
+                        - Prefer hard data over assumptions
+                        - Consider recent market conditions
+                        - Flag if numbers seem unusually high/low"""},
+                        {"role": "user", "content": f"""Analyze this information and provide an accurate employee count for {company}'s {country} office.
+                        
+                        Company: {company}
+                        Country: {country}
+                        Available Information:
+                        {web_info}
+                        
+                        Remember:
+                        1. Focus ONLY on {country} employees
+                        2. Do not use global numbers
+                        3. Be conservative in estimates
+                        4. Consider the type of company and office"""}
+                    ],
+                    functions=[{
+                        "name": "get_employee_count",
+                        "description": "Get the number of employees at a company",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "employee_count": {
+                                    "type": "integer",
+                                    "description": "The number of employees at the company (must be a plain integer)"
+                                },
+                                "confidence": {
+                                    "type": "string",
+                                    "enum": ["HIGH", "MEDIUM", "LOW"],
+                                    "description": "Confidence level in the employee count"
+                                },
+                                "sources": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "description": "List of sources used to determine the count"
+                                },
+                                "explanation": {
+                                    "type": "string",
+                                    "description": "Brief explanation of the reasoning"
+                                }
+                            },
+                            "required": ["employee_count", "confidence", "sources", "explanation"]
+                        }
+                    }],
+                    function_call={"name": "get_employee_count"}
+                )
                 
+                if response.choices[0].message.get("function_call"):
+                    initial_result = json.loads(response.choices[0].message["function_call"]["arguments"])
+                    
+                    # Validate employee count
+                    employee_count = validate_employee_count(initial_result.get("employee_count"))
+                    if employee_count is None:
+                        raise ValueError(f"Invalid employee count received for {company}")
+                    initial_result["employee_count"] = employee_count
+            
+            # Have GPT-4 review the estimate with country-specific context
+            reviewed_result = review_employee_count(company, country, initial_result, web_info)
+            
+            # Validate reviewed count
+            reviewed_count = validate_employee_count(reviewed_result.get("employee_count"))
+            if reviewed_count is None:
+                # If review gives invalid count, use original
+                reviewed_result["employee_count"] = employee_count
+            else:
+                reviewed_result["employee_count"] = reviewed_count
+            
+            results.append({
+                "company": company,
+                "employee_count": reviewed_result["employee_count"],
+                "confidence": reviewed_result["confidence"],
+                "sources": ", ".join(reviewed_result["sources"]),
+                "explanation": reviewed_result["explanation"],
+                "was_adjusted": reviewed_result.get("was_adjusted", False)
+            })
+            
             # Update progress in Redis if using it
             if using_redis:
                 processed = redis_client.hincrby(f"batch:{batch_id}", "processed", 1)
@@ -808,6 +876,120 @@ except redis.ConnectionError as e:
     print("Using in-memory Redis mock for local development")
     using_redis = False
     queue = None
+
+def analyze_search_results(company, country, search_results):
+    """Analyze search results using GPT-4"""
+    try:
+        # Organize results by source
+        organized_results = {
+            "linkedin_data": [],
+            "official_statements": [],
+            "job_postings": [],
+            "other_sources": []
+        }
+
+        for result in search_results:
+            if 'linkedin.com/company' in result['link']:
+                organized_results['linkedin_data'].append(result)
+            elif 'linkedin.com/jobs' in result['link']:
+                organized_results['job_postings'].append(result)
+            elif company.lower() in result['link'].lower():
+                organized_results['official_statements'].append(result)
+            else:
+                organized_results['other_sources'].append(result)
+
+        # Create GPT-4 prompt
+        prompt = f"""Analyze these search results to determine employee count for {company} in {country}.
+
+SEARCH RESULTS:
+
+LinkedIn Company Data:
+{format_results(organized_results['linkedin_data'])}
+
+Official Statements:
+{format_results(organized_results['official_statements'])}
+
+Job Postings:
+{format_results(organized_results['job_postings'])}
+
+Other Sources:
+{format_results(organized_results['other_sources'])}
+
+Focus on:
+1. Direct mentions of employee numbers
+2. Recent data (within last year)
+3. Country-specific information
+4. Consistency across sources
+5. Context of numbers (global vs local)
+
+Provide:
+1. Most likely employee count
+2. Confidence level
+3. Sources used
+4. Key evidence
+5. Any conflicting data"""
+
+        # Call GPT-4 for analysis
+        response = call_openai_with_retry(
+            messages=[
+                {"role": "system", "content": """You are an expert data analyst specializing in workforce analytics.
+                Your task is to analyze search results and determine accurate employee counts for specific country offices.
+                
+                ANALYSIS PRIORITIES:
+                1. Direct employee count mentions
+                2. Recent data over old
+                3. Local numbers over global
+                4. Official sources over unofficial
+                5. Consistent patterns across sources
+                
+                Be conservative in estimates and clearly explain your reasoning."""},
+                {"role": "user", "content": prompt}
+            ],
+            functions=[{
+                "name": "get_employee_count",
+                "description": "Get the number of employees at a company",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "employee_count": {
+                            "type": "integer",
+                            "description": "The number of employees at the company"
+                        },
+                        "confidence": {
+                            "type": "string",
+                            "enum": ["HIGH", "MEDIUM", "LOW"],
+                            "description": "Confidence level in the count"
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of sources used"
+                        },
+                        "explanation": {
+                            "type": "string",
+                            "description": "Explanation of the analysis"
+                        }
+                    },
+                    "required": ["employee_count", "confidence", "sources", "explanation"]
+                }
+            }],
+            function_call={"name": "get_employee_count"}
+        )
+
+        if response.choices[0].message.get("function_call"):
+            return json.loads(response.choices[0].message["function_call"]["arguments"])
+        return None
+
+    except Exception as e:
+        print(f"Error analyzing search results: {str(e)}")
+        return None
+
+def format_results(results):
+    """Format search results for GPT-4 prompt"""
+    formatted = []
+    for result in results:
+        formatted.append(f"Source ({result['link']}):\n{result['snippet']}\n")
+    return "\n".join(formatted) if formatted else "No data found."
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
