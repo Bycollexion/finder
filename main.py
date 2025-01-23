@@ -18,7 +18,41 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000", "https://finder-git-main-bycollexions-projects.vercel.app"]}})
+
+# Configure CORS
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "http://localhost:3000",
+            "https://finder-git-main-bycollexions-projects.vercel.app",
+            "https://finder-bycollexions-projects.vercel.app",
+            "https://finder.bycollexion.com"
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"],
+        "expose_headers": ["Content-Disposition"],
+        "supports_credentials": True,
+        "max_age": 3600
+    }
+})
+
+@app.after_request
+def after_request(response):
+    """Ensure CORS headers are set correctly"""
+    origin = request.headers.get('Origin')
+    if origin in [
+        "http://localhost:3000",
+        "https://finder-git-main-bycollexions-projects.vercel.app",
+        "https://finder-bycollexions-projects.vercel.app",
+        "https://finder.bycollexion.com"
+    ]:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    return response
 
 # Configure OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
