@@ -14,8 +14,6 @@ from bs4 import BeautifulSoup
 import time
 import random
 import traceback
-import duckduckgo_search
-from duckduckgo_search import DDGS
 from functools import lru_cache
 
 # Configure logging
@@ -49,17 +47,37 @@ MIN_SEARCH_DELAY = 2  # Minimum seconds between searches
 
 @lru_cache(maxsize=100)
 def cached_web_search(query):
-    """Cached version of web search to avoid repeated calls"""
+    """Cached version of web search using Google Custom Search API"""
     try:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        cx = os.getenv("GOOGLE_CX")  # Custom Search Engine ID
+        
+        if not api_key or not cx:
+            logger.error("Google API credentials not found")
+            return []
+            
+        url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            "key": api_key,
+            "cx": cx,
+            "q": query,
+            "num": 5
+        }
+        
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        
         results = []
-        with DDGS() as ddgs:
-            search_results = list(ddgs.text(query, max_results=5))
-            for result in search_results:
+        data = response.json()
+        
+        if "items" in data:
+            for item in data["items"]:
                 results.append({
-                    "url": result["link"],
-                    "title": result["title"],
-                    "snippet": result["body"]
+                    "url": item.get("link"),
+                    "title": item.get("title"),
+                    "snippet": item.get("snippet", "")
                 })
+                
         logger.debug(f"Search for '{query}' found {len(results)} results")
         return results
     except Exception as e:
