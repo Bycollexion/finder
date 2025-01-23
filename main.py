@@ -198,12 +198,12 @@ def process_company_batch(companies, country, batch_id):
                     4. Check regional patterns
                     5. Flag unusual growth/decline
 
-                    Always explain your confidence level and reasoning."""},
-                    {"role": "user", "content": f"""How many employees does {company} have in {country}? 
-                    Consider only full-time employees.
-                    
-                    Web search results:
-                    {web_info}"""}
+                    Return your analysis in a structured format with:
+                    1. Employee count
+                    2. Confidence level (HIGH, MEDIUM, LOW)
+                    3. Sources used
+                    4. Brief explanation of your reasoning"""},
+                    {"role": "user", "content": f"Based on these search results, analyze the employee count for {company} in {country}:\n\n{web_info}"}
                 ],
                 functions=[{
                     "name": "get_employee_count",
@@ -213,30 +213,54 @@ def process_company_batch(companies, country, batch_id):
                         "properties": {
                             "employee_count": {
                                 "type": "integer",
-                                "description": "The number of employees at the company in the specified country"
+                                "description": "The number of employees at the company"
                             },
                             "confidence": {
                                 "type": "string",
-                                "enum": ["high", "medium", "low"],
-                                "description": "Confidence level in the employee count: low (outdated/conflicting), medium (recent unofficial), high (recent official)"
+                                "enum": ["HIGH", "MEDIUM", "LOW"],
+                                "description": "Confidence level in the employee count"
+                            },
+                            "sources": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "List of sources used to determine the count"
+                            },
+                            "explanation": {
+                                "type": "string",
+                                "description": "Brief explanation of the reasoning"
                             }
                         },
-                        "required": ["employee_count", "confidence"]
+                        "required": ["employee_count", "confidence", "sources", "explanation"]
                     }
                 }],
                 function_call={"name": "get_employee_count"}
             )
             
-            result = json.loads(response['choices'][0]['message']['function_call']['arguments'])
-            results.append({
-                "company": company,
-                "employee_count": result["employee_count"],
-                "confidence": result["confidence"]
-            })
-            
-            # Update progress in Redis
-            redis_client.hset(f"batch:{batch_id}", "processed", len(results))
-            
+            if response.choices[0].message.get("function_call"):
+                result = json.loads(response.choices[0].message["function_call"]["arguments"])
+                results.append({
+                    "company": company,
+                    "employee_count": result["employee_count"],
+                    "confidence": result["confidence"],
+                    "sources": ", ".join(result["sources"]),
+                    "explanation": result["explanation"]
+                })
+            else:
+                results.append({
+                    "company": company,
+                    "error": "Failed to process company information"
+                })
+                
+            # Update progress in Redis if using it
+            if using_redis:
+                processed = redis_client.hincrby(f"batch:{batch_id}", "processed", 1)
+                total = int(redis_client.hget(f"batch:{batch_id}", "total") or 0)
+                if processed >= total:
+                    redis_client.hset(f"batch:{batch_id}", "status", "completed")
+                    redis_client.set(f"results:{batch_id}", json.dumps(results))
+                    
         except Exception as e:
             print(f"Error processing company {company}: {str(e)}")
             results.append({
@@ -331,13 +355,20 @@ def process_file():
                 # Create CSV file in memory
                 string_output = StringIO()
                 writer = csv.writer(string_output)
-                writer.writerow(['Company', 'Employee Count', 'Error'])
+                writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Explanation', 'Error'])
                 
                 for result in results:
                     if 'error' in result:
-                        writer.writerow([result['company'], '', result['error']])
+                        writer.writerow([result['company'], '', '', '', '', result['error']])
                     else:
-                        writer.writerow([result['company'], result.get('employee_count', ''), ''])
+                        writer.writerow([
+                            result['company'],
+                            result.get('employee_count', ''),
+                            result.get('confidence', ''),
+                            result.get('sources', ''),
+                            result.get('explanation', ''),
+                            ''
+                        ])
                 
                 # Convert to bytes for file download
                 bytes_output = BytesIO()
@@ -352,11 +383,11 @@ def process_file():
                 )
                 
             except Exception as e:
-                print(f"Error processing file: {str(e)}")  # Add debug logging
+                print(f"Error processing file: {str(e)}")
                 return jsonify({"error": str(e)}), 500
             
     except Exception as e:
-        print(f"Error in process_file: {str(e)}")  # Add debug logging
+        print(f"Error in process_file: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/status/<batch_id>', methods=['GET'])
