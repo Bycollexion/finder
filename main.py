@@ -74,48 +74,71 @@ def search_web_info(company, country):
         messages = [
             {
                 "role": "system",
-                "content": f"""You are a data analyst with access to company information databases and news sources.
-                Your task is to find and report actual employee counts and office information for {company} in {country}.
+                "content": f"""You are querying multiple databases to find employee counts and office information for {company} in {country}.
                 
-                IMPORTANT: DO NOT give search instructions or suggestions.
-                Instead, act as if you are querying databases and provide ONLY the actual data you find.
+                CHECK THESE SOURCES IN ORDER:
+                1. LinkedIn Company Data:
+                   - Employee count in {country}
+                   - Office locations
+                   - Current job openings
                 
-                If you cannot find specific data, say "No reliable data found" for that section.
+                2. Company Annual Reports:
+                   - Regional headcount
+                   - Office expansions
+                   - Investment in {country}
                 
-                Required format:
+                3. Government Data:
+                   - Business registration
+                   - Employment passes
+                   - Tax filings
                 
-                HEADQUARTERS: [Office location in {country}]
+                4. Commercial Real Estate:
+                   - Office leases
+                   - Square footage
+                   - Recent moves
                 
-                EMPLOYEE COUNT:
-                - Current count: [Most recent number with date]
-                - Historical: [Previous numbers with dates]
-                - Source: [Where this data comes from]
+                5. News and Press:
+                   - Hiring announcements
+                   - Office openings
+                   - Layoff reports
                 
-                OFFICE DETAILS:
-                - Location: [Specific address]
-                - Size: [Square footage/floors if available]
-                - Type: [HQ/Regional office/etc]
+                FORMAT YOUR RESPONSE:
                 
-                RECENT DEVELOPMENTS:
-                - [Date]: [Event/Change]
-                - [Date]: [Event/Change]
+                OFFICE STATUS:
+                □ Confirmed {country} office
+                □ No office found
+                □ Status unclear
                 
-                CURRENT HIRING (Last 30 days):
-                - Open positions: [Number]
-                - Departments: [List]
+                PRIMARY OFFICE:
+                - Address: [Full address]
+                - Type: [HQ/Regional/Sales/R&D]
+                - Size: [Square feet/floors]
                 
-                Remember: Only report ACTUAL DATA you find. No instructions or suggestions."""
+                EMPLOYEE DATA:
+                - Latest Count: [Number] as of [Date]
+                - YoY Change: [+/-]%
+                - Source: [LinkedIn/Annual Report/News]
+                
+                HIRING STATUS:
+                - Active Roles: [Number]
+                - Key Departments: [List]
+                - Growth Trend: [Expanding/Stable/Reducing]
+                
+                NOTES:
+                - [Any important context]
+                
+                BE SPECIFIC: Report only real data you find. If you can't find something, mark it as "No data" rather than making assumptions."""
             },
             {
                 "role": "user",
-                "content": f"Provide the current employee count and office data for {company}'s presence in {country}. Report only facts and numbers you find, not search suggestions."
+                "content": f"Query all data sources and report the current status of {company}'s presence in {country}."
             }
         ]
 
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=messages,
-            temperature=0.3,  # Lower temperature for more factual responses
+            temperature=0.1,  # Very low temperature for factual responses
             max_tokens=1000
         )
 
@@ -126,45 +149,48 @@ def search_web_info(company, country):
         messages = [
             {
                 "role": "system",
-                "content": f"""You are analyzing employee count data for {company} in {country}.
+                "content": f"""You are calculating the most accurate employee count for {company} in {country}.
                 
-                Rules:
-                1. Look for "Current count" in the data - this is most reliable
-                2. If no current count, look for recent hiring or office size data
-                3. If multiple numbers exist, use the most recent
-                4. If only a range exists, use the midpoint
-                5. If no specific numbers but office details exist, estimate based on:
-                   - Office size (typically 100-150 sqft per employee)
-                   - Job openings (typically 5-10% of total headcount)
-                   - Office type (HQ typically 500+, Regional 100-500, Sales 20-100)
-                6. If no presence confirmed, return 0
-                7. Return ONLY a number, no text
+                CALCULATION RULES:
+                1. If "Latest Count" exists with a date within 2 years:
+                   - Use that number directly
                 
-                Example good responses:
-                500
-                0
+                2. If office size is known:
+                   - Use 150 sq ft per employee for tech companies
+                   - Use 100 sq ft per employee for others
+                   - Round to nearest 50
                 
-                Bad responses:
-                "About 500"
-                "Unknown"
-                "No data"
-                """
+                3. If only job openings known:
+                   - Multiply active roles by 15 (assuming 6-7% hiring rate)
+                   - Round to nearest 50
+                
+                4. If office type is known but no other data:
+                   - HQ: 1000-2000 employees
+                   - Regional: 200-500 employees
+                   - Sales: 50-100 employees
+                   - R&D: 100-300 employees
+                   Use midpoint of range
+                
+                5. If no office confirmed:
+                   Return 0
+                
+                Return ONLY the final number."""
             },
             {
                 "role": "user",
-                "content": f"Based on this data, what is the most accurate employee count for {company} in {country}:\n{web_data}"
+                "content": f"Calculate the most accurate employee count from this data:\n{web_data}"
             }
         ]
 
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=messages,
-            temperature=0.3,
+            temperature=0.1,
             max_tokens=150
         )
 
         count = extract_number(response.choices[0].message['content'])
-        confidence = "High" if "Current count:" in web_data and any(char.isdigit() for char in web_data) else "Low"
+        confidence = "High" if "Latest Count:" in web_data and "Source:" in web_data else "Low"
         
         if not count or count == "0":
             logger.info(f"No presence found for {company} in {country}")
