@@ -5,8 +5,10 @@
   "outputDirectory": "frontend/dist",
   "installCommand": "cd frontend && npm install",
   "functions": {
-    "api/index.py": {
-      "runtime": "python3@0.1.0"
+    "api/*.py": {
+      "runtime": "vercel-python@3.1.0",
+      "memory": 1024,
+      "maxDuration": 10
     }
   },
   "routes": [
