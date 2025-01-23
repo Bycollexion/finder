@@ -224,7 +224,13 @@ def process_file():
             logger.error("No file part in request")
             return jsonify({"error": "No file uploaded"}), 400
 
+        if 'country' not in request.form:
+            logger.error("No country specified in form")
+            return jsonify({"error": "No country specified"}), 400
+
+        country = request.form['country']
         file = request.files['file']
+        
         if not file.filename:
             logger.error("No file selected")
             return jsonify({"error": "No file selected"}), 400
@@ -236,22 +242,19 @@ def process_file():
         # Read CSV file
         logger.debug(f"Reading CSV file: {file.filename}")
         df = pd.read_csv(file)
-        required_columns = ['Company', 'Country']
         
         logger.debug(f"CSV columns: {df.columns.tolist()}")
-        if not all(col in df.columns for col in required_columns):
-            missing = [col for col in required_columns if col not in df.columns]
-            logger.error(f"Missing required columns: {missing}")
-            return jsonify({"error": f"CSV must contain columns: {', '.join(required_columns)}"}), 400
+        if 'Company' not in df.columns:
+            logger.error("Missing Company column")
+            return jsonify({"error": "CSV must contain a Company column"}), 400
 
         # Process each company
         results = []
         total_rows = len(df)
-        logger.info(f"Processing {total_rows} companies")
+        logger.info(f"Processing {total_rows} companies for country: {country}")
 
         for index, row in df.iterrows():
             company = row['Company'].strip()
-            country = row['Country'].strip()
             
             logger.info(f"Processing {company} ({country}) - {index + 1}/{total_rows}")
             result = search_web_info(company, country)
