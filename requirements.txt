@@ -7,3 +7,4 @@ requests==2.31.0
 tenacity==8.2.3
 Werkzeug==2.0.1
 gunicorn==20.1.0
+fakeredis==2.20.0
