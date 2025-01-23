@@ -1,26 +1,24 @@
+# Use Python 3.9 slim image
 FROM python:3.9-slim
 
+# Run in unbuffered mode
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
+
+# Create and change to the app directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc python3-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy local code to the container image
 COPY . .
 
-# Set environment variables
-ENV PORT=8080
-ENV PYTHONUNBUFFERED=1
-ENV GUNICORN_CMD_ARGS="--config=gunicorn.conf.py --bind=0.0.0.0:8080 --workers=4 --timeout=120 --access-logfile=- --error-logfile=- --log-level=debug"
-
-# Expose port
-EXPOSE 8080
-
-# Start gunicorn
-CMD ["gunicorn", "main:app"]
+# Run the web service on container startup using Railway's PORT
+CMD gunicorn main:app --bind 0.0.0.0:$PORT --workers 4 --threads 8 --timeout 0

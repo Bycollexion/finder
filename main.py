@@ -19,8 +19,7 @@ from datetime import datetime
 # Flask app initialization
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-app.wsgi_app = ProxyFix(app.wsgi_app)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Basic error handlers
 @app.errorhandler(404)
@@ -208,18 +207,7 @@ def process_file():
 @app.route('/')
 def health_check():
     """Basic health check endpoint"""
-    try:
-        return jsonify({
-            "status": "healthy",
-            "timestamp": datetime.now().isoformat()
-        }), 200
-    except Exception as e:
-        app.logger.error(f"Health check failed: {str(e)}")
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }), 500
+    return "OK", 200  # Simple text response for health checks
 
 @app.route('/api/countries', methods=['GET', 'OPTIONS'])
 def get_countries():
