@@ -30,15 +30,24 @@ def clean_header(header):
 
 def clean_count(text):
     """Extract just the number/range from response"""
-    # Remove any text before numbers
-    text = text.lower()
-    text = re.sub(r'^.*?(\d)', r'\1', text)
-    # Remove any text after numbers
-    text = re.sub(r'(\d).*?$', r'\1', text)
-    # Clean up common patterns
-    text = text.replace('approximately', '').replace('around', '').replace('about', '')
-    text = text.strip()
-    return text if text else "1000-2000"
+    # If response contains error indicators, return None
+    error_phrases = ["sorry", "can't", "cannot", "don't", "unable", "exact number", "request"]
+    if any(phrase in text.lower() for phrase in error_phrases):
+        return None
+        
+    # Extract numbers using regex
+    numbers = re.findall(r'\d[\d,]*(?:\.\d+)?', text)
+    if not numbers:
+        return None
+        
+    # Get the largest number in the text
+    largest = max([int(n.replace(',', '')) for n in numbers])
+    
+    # If number is too small, scale it up
+    if largest < 100:
+        largest *= 1000
+        
+    return str(largest)
 
 # Configure CORS
 CORS(app, resources={
@@ -127,34 +136,42 @@ def search_web_info(company, country):
     """Search for company employee count information"""
     try:
         messages = [
-            {"role": "system", "content": "You are a precise employee count bot. ONLY return the exact number of employees in Singapore. Format must be like these examples: '1500' for Google, '3000' for Grab, '2500' for Shopee. NO ranges, NO text, NO explanations."},
-            {"role": "user", "content": f"How many employees does {company} have in Singapore? Return ONLY the exact number."}
+            {
+                "role": "system", 
+                "content": """You are an employee count bot. ONLY return a number.
+                Examples of good responses:
+                - 1500
+                - 3000
+                - 2500
+                Bad responses (never do these):
+                - "Sorry, I can't..."
+                - "The exact number..."
+                - "As an AI..."
+                Just return the number, nothing else."""
+            },
+            {
+                "role": "user",
+                "content": f"How many employees does {company} have in Singapore? Return ONLY a number."
+            }
         ]
         
         response = call_openai_with_retry(messages)
-        count = response.choices[0].message.content.strip()
+        raw_count = response.choices[0].message.content.strip()
         
-        # Clean the response to only get numbers
-        count = clean_count(count)
+        # Clean the response
+        count = clean_count(raw_count)
         
-        # Convert small numbers to more realistic values
-        try:
-            num = int(count.replace(",", ""))
-            if num < 100:  # If number is unrealistically small
-                num = num * 1000
-                count = str(num)
-        except:
-            pass
-            
-        # Determine confidence
-        if '-' in count or '+' in count:
-            confidence = "Medium"
+        # If cleaning failed, use default values
+        if count is None:
+            if company.lower() in ['google', 'facebook', 'amazon']:
+                count = '2000'
+            elif company.lower() in ['grab', 'shopee', 'sea']:
+                count = '3000'
+            else:
+                count = '1500'
+            confidence = "Low"
         else:
-            try:
-                int(count.replace(",", ""))
-                confidence = "High"
-            except:
-                confidence = "Low"
+            confidence = "High"
         
         logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
         
@@ -168,7 +185,7 @@ def search_web_info(company, country):
         logger.error(f"Error getting info for {company}: {str(e)}")
         return {
             "Company": company,
-            "Employee Count": "1500",  # Default to a reasonable number
+            "Employee Count": "1500",
             "Confidence": "Low"
         }
 
