@@ -713,13 +713,14 @@ def get_employee_count():
         return response
 
 # Configure Redis connection
-redis_url = os.getenv('REDIS_URL')  # Railway provides REDIS_URL
+redis_url = os.getenv('REDIS_URL', os.getenv('REDISCLOUD_URL'))  # Try both Railway and Redis Cloud URLs
 redis_client = None
 using_redis = False
 queue = None
 
 try:
     if redis_url:
+        print(f"Attempting to connect to Redis using URL")
         # Parse Redis URL for connection
         redis_client = redis.from_url(
             redis_url,
@@ -728,6 +729,7 @@ try:
             socket_connect_timeout=5
         )
     else:
+        print("No Redis URL found, attempting local connection")
         # Fallback for local development
         redis_host = os.getenv('REDIS_HOST', 'localhost')
         redis_port = int(os.getenv('REDIS_PORT', 6379))
@@ -753,12 +755,13 @@ try:
     
     # Test the connection
     redis_client.ping()
-    print(f"Successfully connected to Redis")
+    print("Successfully connected to Redis")
     using_redis = True
     # Configure RQ queue
     queue = Queue(connection=redis_client)
 except (redis.ConnectionError, redis.TimeoutError) as e:
     print(f"Failed to connect to Redis: {e}")
+    print("Environment variables available:", ", ".join([k for k in os.environ.keys() if 'REDIS' in k.upper()]))
     # Fallback to using local memory if Redis is not available
     from fakeredis import FakeRedis
     redis_client = FakeRedis(decode_responses=True)
