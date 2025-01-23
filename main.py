@@ -84,15 +84,15 @@ def search_web_info(company, country):
 
         country_name = get_country_name(country)
 
-        # First ask for the direct count
+        # Add context to the prompt
         messages = [
             {
                 "role": "system",
-                "content": "You are an AI that provides precise employee counts for companies in specific countries. Respond with ONLY the number, no additional text."
+                "content": "You are an AI specialized in retrieving corporate data, including employee counts for specific companies in given countries. Use the most reliable sources available."
             },
             {
                 "role": "user",
-                "content": f"What is the employee count of {company} in {country_name}? Return only the number."
+                "content": f"What is the employee count of {company} in {country_name}? Provide the number based on the latest available data."
             }
         ]
 
@@ -110,11 +110,11 @@ def search_web_info(company, country):
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an AI that verifies employee counts. Answer YES if confident, NO if unsure, UNKNOWN if no data available."
+                    "content": "You are an AI that verifies the accuracy of employee counts. Confirm the reliability of the data."
                 },
                 {
                     "role": "user",
-                    "content": f"Are you confident that {company} has approximately {count} employees in {country_name}? Answer YES/NO/UNKNOWN only."
+                    "content": f"Is the employee count of {company} in {country_name} approximately {count}? Answer YES if confident, NO if unsure, UNKNOWN if no data available."
                 }
             ]
 
@@ -138,11 +138,11 @@ def search_web_info(company, country):
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an AI that estimates employee counts based on office presence. Return only a number."
+                    "content": "You are an AI that estimates employee counts using available data sources. Return only a number."
                 },
                 {
                     "role": "user",
-                    "content": f"Find the employee count of {company} in {country_name}. Output: [Number only]"
+                    "content": f"Estimate the employee count of {company} in {country_name}. Output: [Number only]"
                 }
             ]
 
