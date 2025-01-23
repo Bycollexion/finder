@@ -41,7 +41,7 @@ def clean_count(text):
         return numbers[0].replace(',', '')
     return None
 
-def search_web(query):
+def perform_web_search(query):
     """Perform web search and return results"""
     try:
         results = []
@@ -58,9 +58,18 @@ def search_web(query):
 def get_web_content(url):
     """Safely get content from a URL"""
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
-        return soup.get_text()
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+        # Get text and clean it
+        text = soup.get_text()
+        # Remove extra whitespace
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = ' '.join(chunk for chunk in chunks if chunk)
+        return text
     except Exception as e:
         logger.error(f"Error reading URL {url}: {str(e)}")
         return ""
@@ -86,7 +95,7 @@ def search_web_info(company, country):
         ]
         
         for query in count_queries:
-            results = search_web(query)
+            results = perform_web_search(query)
             for result in results:
                 content = get_web_content(result['url'])
                 if content and company.lower() in content.lower() and country.lower() in content.lower():
@@ -102,7 +111,7 @@ def search_web_info(company, country):
         ]
         
         for query in linkedin_queries:
-            results = search_web(query)
+            results = perform_web_search(query)
             for result in results:
                 if "linkedin.com" in result['url'].lower():
                     content = get_web_content(result['url'])
@@ -120,7 +129,7 @@ def search_web_info(company, country):
         ]
         
         for query in news_queries:
-            results = search_web(query)
+            results = perform_web_search(query)
             for result in results:
                 content = get_web_content(result['url'])
                 if content:
@@ -156,6 +165,10 @@ def search_web_info(company, country):
             formatted_text += "\nHiring Data:\n"
             for item in all_data["hiring_data"]:
                 formatted_text += f"Source: {item['source']}\n{item['content']}\n"
+        
+        logger.debug(f"Found data for {company}:")
+        for category, items in all_data.items():
+            logger.debug(f"- {category}: {len(items)} items")
         
         # Ask OpenAI to analyze all the data
         messages = [
