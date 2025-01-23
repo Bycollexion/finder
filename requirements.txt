@@ -7,3 +7,4 @@ requests==2.31.0
 tenacity==8.2.3
 redis==5.0.1
 rq==1.15.1
+fakeredis==2.20.0

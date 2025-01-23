@@ -432,13 +432,34 @@ def get_employee_count():
 # Configure Redis connection
 redis_host = os.getenv('REDIS_HOST', 'localhost')
 redis_port = int(os.getenv('REDIS_PORT', 6379))
-redis_password = os.getenv('REDIS_PASSWORD', None)
-redis_client = redis.Redis(
-    host=redis_host,
-    port=redis_port,
-    password=redis_password,
-    decode_responses=True
-)
+redis_password = os.getenv('REDIS_PASSWORD')  
+
+try:
+    # Try connecting to Redis with authentication if password is provided
+    if redis_password:
+        redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            password=redis_password,
+            decode_responses=True
+        )
+    else:
+        # Connect without authentication for local development
+        redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            decode_responses=True
+        )
+    
+    # Test the connection
+    redis_client.ping()
+    print(f"Successfully connected to Redis at {redis_host}:{redis_port}")
+except redis.ConnectionError as e:
+    print(f"Failed to connect to Redis: {e}")
+    # Fallback to using local memory if Redis is not available
+    from fakeredis import FakeRedis
+    redis_client = FakeRedis(decode_responses=True)
+    print("Using in-memory Redis mock for local development")
 
 # Configure RQ queue
 queue = Queue(connection=redis_client)
