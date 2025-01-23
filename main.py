@@ -13,12 +13,6 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import time
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from openai.error import RateLimitError, APIError
-import redis
-from rq import Queue
-from rq.job import Job
-import uuid
-from datetime import datetime
-import math
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
@@ -213,7 +207,7 @@ def validate_employee_count(count):
                 return None
     return None
 
-def process_company_batch(companies, country, progress_key=None):
+def process_company_batch(companies, country):
     """Process a batch of companies"""
     results = []
     total = len(companies)
@@ -222,13 +216,6 @@ def process_company_batch(companies, country, progress_key=None):
         try:
             print(f"Processing company {i+1}/{total}: {company}")
             
-            # Update progress if we have a key
-            if progress_key and using_redis:
-                try:
-                    redis_client.hset(progress_key, 'current', i+1)
-                except:
-                    pass  # Ignore Redis errors
-                    
             # Skip empty company names
             if not company or not company.strip():
                 results.append({
@@ -238,21 +225,8 @@ def process_company_batch(companies, country, progress_key=None):
                 })
                 continue
 
-            # Try to get cached result first
-            cache_key = f"company:{company}:{country}"
-            if using_redis:
-                try:
-                    cached = redis_client.get(cache_key)
-                    if cached:
-                        results.append(json.loads(cached))
-                        print(f"Cache hit for {company}")
-                        continue
-                except:
-                    pass  # Ignore Redis errors
-
             # Get company info
             info = search_web_info(company, country)
-            
             if not info:
                 results.append({
                     'company': company,
@@ -260,14 +234,7 @@ def process_company_batch(companies, country, progress_key=None):
                     'error': 'No information found'
                 })
                 continue
-
-            # Cache the result
-            if using_redis:
-                try:
-                    redis_client.setex(cache_key, 3600*24, json.dumps(info))  # Cache for 24 hours
-                except:
-                    pass  # Ignore Redis errors
-                    
+                
             results.append(info)
             
         except Exception as e:
@@ -284,9 +251,7 @@ def process_company_batch(companies, country, progress_key=None):
 def health_check():
     """Basic health check endpoint"""
     try:
-        if using_redis:
-            redis_client.ping()
-        return jsonify({"status": "healthy", "redis": "connected" if using_redis else "mock"}), 200
+        return jsonify({"status": "healthy"}), 200
     except Exception as e:
         print(f"Health check failed: {str(e)}")
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
@@ -422,22 +387,8 @@ def process_file():
                     "details": "No valid company names found in the first column"
                 }), 400
 
-            # Create progress key
-            progress_key = None
-            if using_redis:
-                try:
-                    progress_key = f"progress:{time.time()}"
-                    redis_client.hmset(progress_key, {
-                        'total': len(companies),
-                        'current': 0,
-                        'status': 'processing'
-                    })
-                    redis_client.expire(progress_key, 3600)  # Expire after 1 hour
-                except:
-                    pass  # Ignore Redis errors
-
             # Process in smaller batches to avoid timeouts
-            batch_size = 3  # Reduced batch size
+            batch_size = 2  # Process just 2 at a time
             all_results = []
             
             print(f"Processing companies in batches of {batch_size}")
@@ -445,7 +396,7 @@ def process_file():
                 batch = companies[i:i + batch_size]
                 print(f"Processing batch {i//batch_size + 1}/{(len(companies) + batch_size - 1)//batch_size}")
                 try:
-                    results = process_company_batch(batch, country, progress_key)
+                    results = process_company_batch(batch, country)
                     all_results.extend(results)
                 except Exception as e:
                     print(f"Error processing batch: {str(e)}")
@@ -456,13 +407,6 @@ def process_file():
                         'status': 'error',
                         'error': f"Failed to process: {str(e)}"
                     } for company in batch])
-
-            # Update progress
-            if progress_key and using_redis:
-                try:
-                    redis_client.hset(progress_key, 'status', 'complete')
-                except:
-                    pass  # Ignore Redis errors
 
             print("Creating output CSV...")
             # Create CSV from results
@@ -490,6 +434,14 @@ def process_file():
             
             # Create response with all necessary headers
             response = make_response(output.getvalue())
+            response.headers.update({
+                'Content-Type': 'text/csv',
+                'Content-Disposition': f'attachment; filename=employee_counts_{timestamp}.csv',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Expose-Headers': 'Content-Disposition'
+            })
             return response
 
         except csv.Error as e:
@@ -507,71 +459,6 @@ def process_file():
             "details": str(e),
             "type": "network_error" if "Network" in str(e) else "processing_error"
         }), 500
-
-@app.route('/api/status/<batch_id>', methods=['GET'])
-def get_status(batch_id):
-    """Get the status of a batch processing job"""
-    try:
-        if not using_redis:
-            return jsonify({"error": "Status tracking not available"}), 400
-
-        status = redis_client.hget(f"batch:{batch_id}", "status")
-        if not status:
-            return jsonify({"error": "Batch not found"}), 404
-
-        total = int(redis_client.hget(f"batch:{batch_id}", "total") or 0)
-        processed = int(redis_client.hget(f"batch:{batch_id}", "processed") or 0)
-        
-        return jsonify({
-            "status": status,
-            "total": total,
-            "processed": processed,
-            "progress": (processed / total * 100) if total > 0 else 0
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/results/<batch_id>', methods=['GET'])
-def get_results(batch_id):
-    """Get the results of a completed batch"""
-    try:
-        if not using_redis:
-            return jsonify({"error": "Results not available"}), 400
-
-        results = redis_client.get(f"results:{batch_id}")
-        if not results:
-            return jsonify({"error": "Results not found"}), 404
-
-        # Create CSV from results
-        results = json.loads(results)
-        output = StringIO()
-        writer = csv.writer(output)
-        
-        # Write header
-        writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Status', 'Error/Explanation'])
-        
-        # Write results
-        for result in results:
-            writer.writerow([
-                result.get('company', ''),
-                result.get('employee_count', ''),
-                result.get('confidence', ''),
-                result.get('sources', ''),
-                result.get('status', 'error'),
-                result.get('error', result.get('explanation', ''))
-            ])
-        
-        # Create response with file download
-        output.seek(0)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        return send_file(
-            BytesIO(output.getvalue().encode('utf-8')),
-            mimetype='text/csv',
-            as_attachment=True,
-            download_name=f'employee_counts_{timestamp}.csv'
-        )
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/employee_count', methods=['POST'])
 def get_employee_count():
@@ -668,63 +555,6 @@ def call_openai_with_retry(messages, functions=None, function_call=None):
         if "quota" in str(e).lower():
             raise RateLimitError("Quota exceeded")
         raise
-
-# Configure Redis connection
-redis_url = os.getenv('REDIS_URL', os.getenv('REDISCLOUD_URL'))  # Try both Railway and Redis Cloud URLs
-redis_client = None
-using_redis = False
-queue = None
-
-try:
-    if redis_url:
-        print(f"Attempting to connect to Redis using URL")
-        # Parse Redis URL for connection
-        redis_client = redis.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_timeout=5,
-            socket_connect_timeout=5
-        )
-    else:
-        print("No Redis URL found, attempting local connection")
-        # Fallback for local development
-        redis_host = os.getenv('REDIS_HOST', 'localhost')
-        redis_port = int(os.getenv('REDIS_PORT', 6379))
-        redis_password = os.getenv('REDIS_PASSWORD')
-        
-        if redis_password:
-            redis_client = redis.Redis(
-                host=redis_host,
-                port=redis_port,
-                password=redis_password,
-                decode_responses=True,
-                socket_timeout=5,
-                socket_connect_timeout=5
-            )
-        else:
-            redis_client = redis.Redis(
-                host=redis_host,
-                port=redis_port,
-                decode_responses=True,
-                socket_timeout=5,
-                socket_connect_timeout=5
-            )
-    
-    # Test the connection
-    redis_client.ping()
-    print("Successfully connected to Redis")
-    using_redis = True
-    # Configure RQ queue
-    queue = Queue(connection=redis_client)
-except (redis.ConnectionError, redis.TimeoutError) as e:
-    print(f"Failed to connect to Redis: {e}")
-    print("Environment variables available:", ", ".join([k for k in os.environ.keys() if 'REDIS' in k.upper()]))
-    # Fallback to using local memory if Redis is not available
-    from fakeredis import FakeRedis
-    redis_client = FakeRedis(decode_responses=True)
-    print("Using in-memory Redis mock for development")
-    using_redis = False
-    queue = None
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
