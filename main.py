@@ -48,30 +48,99 @@ def after_request(response):
 def search_web_info(company_name, country):
     """Search the web using multiple specific queries"""
     try:
-        # Create more specific queries focusing on LinkedIn and career pages
+        # Create targeted queries for different sources
         queries = [
-            f"{company_name} {country} linkedin",
-            f"{company_name} {country} careers",
-            f"{company_name} {country} jobs",
-            f"{company_name} {country} office location",
+            # LinkedIn data (primary source)
+            f"{company_name} {country} site:linkedin.com employees",
+            f"{company_name} {country} site:linkedin.com company size",
+            f"{company_name} {country} site:linkedin.com/company headquarters",
+            f"{company_name} {country} site:linkedin.com/company office",
+            
+            # Official company sources
+            f"{company_name} {country} careers number of employees",
+            f"{company_name} {country} jobs team size",
+            f"{company_name} {country} official office employees",
+            f"{company_name} {country} headquarters staff size",
+            
+            # Business directories (verified data)
+            f"{company_name} {country} site:glassdoor.com size",
+            f"{company_name} {country} site:glassdoor.com office",
+            f"{company_name} {country} site:ambitionbox.com employees",
+            
+            # Location specific
+            f"{company_name} office location {country} employees",
+            f"{company_name} {country} regional headquarters size"
         ]
         
-        # Search and combine results
+        # Search and combine results, prioritizing LinkedIn and official sources
         all_results = []
+        linkedin_results = []
+        official_results = []
+        directory_results = []
+        
         for query in queries:
             try:
                 search_results = search_web({"query": query})
                 if search_results:
                     for result in search_results:
-                        content = read_url_content({"Url": result["url"]})
-                        if content:
-                            all_results.append(f"Source ({result['url']}): {content}")
+                        try:
+                            content = read_url_content({"Url": result["url"]})
+                            if not content:
+                                continue
+                                
+                            result_entry = f"Source ({result['url']}): {content}"
+                            
+                            # Categorize results by source
+                            if "linkedin.com" in result["url"].lower():
+                                linkedin_results.append(result_entry)
+                            elif company_name.lower() in result["url"].lower():
+                                official_results.append(result_entry)
+                            elif any(domain in result["url"].lower() for domain in [
+                                "glassdoor.com", "ambitionbox.com"
+                            ]):
+                                directory_results.append(result_entry)
+                                
+                        except Exception as e:
+                            print(f"Error reading content from {result['url']}: {e}")
+                            continue
+                            
             except Exception as e:
                 print(f"Error searching for {query}: {e}")
                 continue
-            
+        
+        # Combine results in priority order
+        all_results.extend(linkedin_results)    # LinkedIn data first
+        all_results.extend(official_results)    # Official company sources second
+        all_results.extend(directory_results)   # Business directories last
+        
         if all_results:
             return "\n\n".join(all_results)
+            
+        # If no results found, try a more general search on LinkedIn and official sites
+        try:
+            general_queries = [
+                f"{company_name} {country} site:linkedin.com",
+                f"{company_name} {country} careers"
+            ]
+            general_content = []
+            
+            for general_query in general_queries:
+                general_results = search_web({"query": general_query})
+                if general_results:
+                    for result in general_results:
+                        try:
+                            content = read_url_content({"Url": result["url"]})
+                            if content:
+                                general_content.append(f"Source ({result['url']}): {content}")
+                        except Exception as e:
+                            continue
+                            
+            if general_content:
+                return "\n\n".join(general_content)
+                
+        except Exception as e:
+            print(f"Error in general search: {e}")
+        
         return "No specific information found. Using regional knowledge for estimation."
         
     except Exception as e:
@@ -319,62 +388,63 @@ def process_company_batch(companies, country, batch_id):
             response = call_openai_with_retry(
                 messages=[
                     {"role": "system", "content": """You are a company data analyst specializing in workforce analytics.
-                    Analyze LinkedIn and career page data to estimate employee counts based on the following guidelines:
-
-                    PRIMARY DATA SOURCES (in order of priority):
-                    1. LinkedIn company page employee count ranges
-                    2. Company career pages showing open positions
-                    3. Office locations and sizes
-                    4. Industry benchmarks and regional patterns
-
-                    INDUSTRY-SPECIFIC PATTERNS:
-                    TECH COMPANIES:
-                    - MNC Tech Office (Malaysia):
-                      * Small: 10-50 (Sales/Support)
-                      * Medium: 50-200 (Regional Office)
-                      * Large: 200-500 (Development Center)
-                      * Very Large: 500+ (Regional HQ)
+                    Your task is to analyze company information and provide accurate employee counts for specific country offices.
                     
-                    TRADITIONAL INDUSTRIES:
-                    - Manufacturing: 100-1000 based on facility size
-                    - Retail: 10-50 per major location
-                    - Services: 20-100 per office
-                    - Banks: 50-200 per major branch
-
-                    REGIONAL CONTEXT FOR MALAYSIA:
-                    - KL Sentral/Bangsar South: Tech offices (50-200)
-                    - KLCC/Central: Corporate offices (100-300)
-                    - Cyberjaya: Support/Dev centers (200-500)
-                    - Industrial areas: Manufacturing (100-1000)
-
-                    CONFIDENCE SCORING:
-                    HIGH:
-                    - Direct LinkedIn employee count range
-                    - Multiple job postings with team size hints
-                    - Clear office location with known capacity
-
-                    MEDIUM:
-                    - Indirect LinkedIn data (job posts, activity)
-                    - Single office location without size
-                    - Industry standard ratios
-
-                    LOW:
-                    - No LinkedIn presence
-                    - No job postings
-                    - Only global presence without local info
-
-                    VALIDATION RULES:
-                    1. Compare with similar companies in region
-                    2. Check if employee count matches office capacity
-                    3. Validate against industry benchmarks
-                    4. Consider company age and market presence
-
-                    IMPORTANT NOTES:
-                    - Prefer conservative estimates when uncertain
-                    - For MNCs, focus only on local office size
-                    - Consider remote workers based in the country
-                    - Account for recent market conditions"""},
-                    {"role": "user", "content": f"Based on LinkedIn and career page data, estimate the employee count for {company} in {country}. Here's the available information:\n\n{web_info}"}
+                    ANALYSIS PRIORITIES:
+                    1. LinkedIn Data:
+                       - Look for specific employee counts or ranges for the country
+                       - Check number of employees who list the company and country
+                       - Analyze job postings volume in the country
+                    
+                    2. Official Sources:
+                       - Company career pages showing local team size
+                       - Official announcements about office size/expansion
+                       - Press releases about local operations
+                    
+                    3. Office Information:
+                       - Office locations and their typical capacity
+                       - Number of offices in the country
+                       - Office type (HQ, R&D, Sales, etc.)
+                    
+                    ESTIMATION RULES:
+                    1. For MNCs (like Google, Meta, Amazon):
+                       - Focus ONLY on the specific country office
+                       - DO NOT use global employee counts
+                       - Consider office type and location
+                       - Compare with similar companies in the same area
+                    
+                    2. For Regional Companies (like Grab, Shopee):
+                       - Consider if it's their home market
+                       - Look at office locations and types
+                       - Factor in market share in the country
+                    
+                    3. For Local Companies:
+                       - Use direct local employee data
+                       - Consider market presence and coverage
+                       - Factor in industry standards
+                    
+                    CONFIDENCE LEVELS:
+                    HIGH: Direct employee count from LinkedIn or official sources
+                    MEDIUM: Clear office information or consistent indirect data
+                    LOW: Only regional patterns or limited information
+                    
+                    IMPORTANT:
+                    - Always return conservative estimates
+                    - Prefer hard data over assumptions
+                    - Consider recent market conditions
+                    - Flag if numbers seem unusually high/low"""},
+                    {"role": "user", "content": f"""Analyze this information and provide an accurate employee count for {company}'s {country} office.
+                    
+                    Company: {company}
+                    Country: {country}
+                    Available Information:
+                    {web_info}
+                    
+                    Remember:
+                    1. Focus ONLY on {country} employees
+                    2. Do not use global numbers
+                    3. Be conservative in estimates
+                    4. Consider the type of company and office"""}
                 ],
                 functions=[{
                     "name": "get_employee_count",
@@ -418,7 +488,7 @@ def process_company_batch(companies, country, batch_id):
                     raise ValueError(f"Invalid employee count received for {company}")
                 initial_result["employee_count"] = employee_count
                 
-                # Have GPT-4 review the estimate
+                # Have GPT-4 review the estimate with country-specific context
                 reviewed_result = review_employee_count(company, country, initial_result, web_info)
                 
                 # Validate reviewed count
