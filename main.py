@@ -84,99 +84,15 @@ def search_web_info(company, country):
 
         country_name = get_country_name(country)
 
-        # First ask GPT to search and analyze
+        # First ask for the direct count
         messages = [
             {
                 "role": "system",
-                "content": f"""You are the CompanyDataAPI, a corporate intelligence database. You have been queried for information about {company}'s presence in {country_name}.
-
-AVAILABLE ENDPOINTS:
-/api/v1/office_presence
-/api/v1/employee_data
-/api/v1/real_estate
-/api/v1/hiring_status
-
-RESPONSE FORMAT:
-{{
-    "query_timestamp": "2025-01-23",
-    "company": "{company}",
-    "region": "{country_name}",
-    "office_presence": {{
-        "status": "ACTIVE|NONE|UNKNOWN",
-        "primary_location": {{
-            "address": "string",
-            "type": "HQ|REGIONAL|SALES|R&D",
-            "size_sqft": number,
-            "lease_status": "OWNED|LEASED|UNKNOWN"
-        }}
-    }},
-    "employee_data": {{
-        "headcount": {{
-            "current": number,
-            "last_updated": "YYYY-MM-DD",
-            "yoy_change_pct": number
-        }},
-        "data_source": "LINKEDIN|ANNUAL_REPORT|NEWS|ESTIMATE"
-    }},
-    "hiring_status": {{
-        "active_roles": number,
-        "key_departments": ["string"],
-        "trend": "EXPANDING|STABLE|REDUCING"
-    }},
-    "confidence_score": number // 0.0-1.0
-}}
-
-Return a complete JSON response with real numbers and data. Do not return instructions or placeholders. If data is unknown, use null."""
+                "content": "You are an AI that provides precise employee counts for companies in specific countries. Respond with ONLY the number, no additional text."
             },
             {
                 "role": "user",
-                "content": f"GET /api/v1/company_data?name={company}&region={country_name}"
-            }
-        ]
-
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=messages,
-            temperature=0.1,  # Very low temperature for factual responses
-            max_tokens=1000
-        )
-
-        web_data = response.choices[0].message['content']
-        logger.debug(f"Web search results for {company}:\n{web_data}")
-
-        # Now analyze the data to get a number
-        messages = [
-            {
-                "role": "system",
-                "content": f"""You are the HeadcountAnalyzer API. Extract the most accurate employee count from the CompanyDataAPI response.
-
-CALCULATION RULES:
-1. If headcount.current exists and last_updated is within 2 years:
-   RETURN headcount.current
-
-2. If office_presence.primary_location.size_sqft exists:
-   - Tech companies: size_sqft / 150 (rounded to nearest 50)
-   - Others: size_sqft / 100 (rounded to nearest 50)
-   RETURN calculated_headcount
-
-3. If hiring_status.active_roles exists:
-   RETURN active_roles * 15 (rounded to nearest 50)
-
-4. If only office_presence.primary_location.type exists:
-   - HQ: 1500
-   - REGIONAL: 350
-   - SALES: 75
-   - R&D: 200
-   RETURN type_based_estimate
-
-5. If office_presence.status != "ACTIVE":
-   RETURN 0
-
-Return ONLY the final number, no explanation."""
-            },
-            {
-                "role": "user",
-                "content": f"Calculate headcount from API response:\n{web_data}"
+                "content": f"What is the employee count of {company} in {country_name}? Return only the number."
             }
         ]
 
@@ -184,32 +100,75 @@ Return ONLY the final number, no explanation."""
             model="gpt-4",
             messages=messages,
             temperature=0.1,
-            max_tokens=150
+            max_tokens=50
         )
 
         count = extract_number(response.choices[0].message['content'])
         
-        # Check if the response had a high confidence score
-        try:
-            import json
-            data = json.loads(web_data)
-            confidence = "High" if data.get("confidence_score", 0) > 0.7 else "Low"
-        except:
+        # If we got a number, verify it with a second prompt
+        if count and count != "0":
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are an AI that verifies employee counts. Answer YES if confident, NO if unsure, UNKNOWN if no data available."
+                },
+                {
+                    "role": "user",
+                    "content": f"Are you confident that {company} has approximately {count} employees in {country_name}? Answer YES/NO/UNKNOWN only."
+                }
+            ]
+
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=messages,
+                temperature=0.1,
+                max_tokens=50
+            )
+
+            confidence_response = response.choices[0].message['content'].strip().upper()
+            
+            if confidence_response == "YES":
+                confidence = "High"
+            elif confidence_response == "NO":
+                confidence = "Medium"
+            else:
+                confidence = "Low"
+        else:
+            # If no count found, try one more time with a different prompt
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are an AI that estimates employee counts based on office presence. Return only a number."
+                },
+                {
+                    "role": "user",
+                    "content": f"Find the employee count of {company} in {country_name}. Output: [Number only]"
+                }
+            ]
+
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=messages,
+                temperature=0.1,
+                max_tokens=50
+            )
+
+            count = extract_number(response.choices[0].message['content'])
             confidence = "Low"
-        
+
         if not count or count == "0":
             logger.info(f"No presence found for {company} in {country_name}")
             return {
                 "Company": company,
                 "Employee Count": "0",
-                "Confidence": confidence
+                "Confidence": "Low"
             }
 
         logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
 
         return {
             "Company": company,
-            "Employee Count": count,
+            "Employee Count": str(count),
             "Confidence": confidence
         }
 
