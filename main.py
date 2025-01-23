@@ -85,22 +85,31 @@ def search_web_info(company, country):
     try:
         response = call_openai_with_retry(
             messages=[
-                {"role": "system", "content": """You are an employee data analyst. Focus ONLY on:
-                1. LinkedIn employee count for the specific country
-                2. Official company website employee count for the country
+                {"role": "system", "content": """You are an employee data analyst. Search these sources in order:
+                1. LinkedIn (highest priority)
+                2. Official company websites
+                3. Glassdoor, Indeed
+                4. News articles about company size/layoffs
+                5. Industry reports
                 
                 Return ONLY this JSON format:
                 {
-                    "employee_count": "<number or range>",
-                    "confidence": "high/medium/low",
-                    "sources": "LinkedIn/Company Website"
+                    "employee_count": "<specific number or range>",
+                    "confidence": "<confidence>",
+                    "sources": "<sources used>"
                 }
                 
-                - If data is from LinkedIn = high confidence
-                - If from company website = medium confidence
-                - If unclear source = low confidence
-                - ALWAYS focus on the specified country only"""},
-                {"role": "user", "content": f"Find employee count for {company} in {country} ONLY. Return JSON."}
+                Confidence levels:
+                - "high": LinkedIn or official company data
+                - "medium": Recent news/reports
+                - "low": Estimates/outdated data
+                
+                IMPORTANT:
+                - Focus on {country} employees only
+                - ALWAYS provide a number/range, even if estimated
+                - Use most recent data available
+                - Combine multiple sources if needed"""},
+                {"role": "user", "content": f"Find employee count for {company} in {country}. MUST return a number/range."}
             ]
         )
         
@@ -110,138 +119,110 @@ def search_web_info(company, country):
                 result = json.loads(content)
             else:
                 result = {
-                    "employee_count": "Unknown",
+                    "employee_count": "Data not found",
                     "confidence": "low",
                     "sources": "No reliable data"
                 }
             
-            result["company"] = company
-            result["status"] = "success"
-            return result
+            return {
+                "Company": company,
+                "Employee Count": result.get("employee_count", "Data not found"),
+                "Confidence": result.get("confidence", "low"),
+                "Sources": result.get("sources", "No reliable data")
+            }
             
         except json.JSONDecodeError:
             return {
-                "company": company,
-                "employee_count": "Unknown",
-                "confidence": "low",
-                "sources": "Error parsing response",
-                "status": "error"
+                "Company": company,
+                "Employee Count": "Data not found",
+                "Confidence": "low",
+                "Sources": "Error in response"
             }
             
     except Exception as e:
-        error_msg = str(e)
-        if "quota" in error_msg.lower():
-            return {
-                "company": company,
-                "employee_count": "Unknown",
-                "confidence": "none",
-                "sources": "API quota exceeded",
-                "status": "error"
-            }
         return {
-            "company": company,
-            "employee_count": "Unknown",
-            "confidence": "none",
-            "sources": "Error occurred",
-            "status": "error"
+            "Company": company,
+            "Employee Count": "Error occurred",
+            "Confidence": "low",
+            "Sources": "API error"
         }
-
-def review_employee_count(company, country, initial_result, web_info):
-    """Review and validate employee count based on available data"""
-    try:
-        response = call_openai_with_retry(
-            messages=[
-                {"role": "system", "content": """You are a data validator. 
-                ONLY validate if:
-                1. The data matches LinkedIn
-                2. The count is specific to the requested country
-                
-                Return ONLY this JSON format:
-                {
-                    "employee_count": "<number or range>",
-                    "confidence": "high/medium/low",
-                    "sources": "<data sources>"
-                }"""},
-                {"role": "user", "content": f"Validate employee count for {company} in {country}. Initial data: {json.dumps(initial_result)}. Web info: {web_info}"}
-            ]
-        )
-        
-        try:
-            result = json.loads(response.choices[0].message.content)
-            result["company"] = company
-            result["status"] = "success"
-            return result
-        except:
-            return initial_result
-            
-    except Exception as e:
-        return initial_result
-
-def validate_employee_count(count):
-    """Validate and clean employee count value"""
-    if count is None:
-        return None
-        
-    if isinstance(count, (int, float)):
-        return int(count)
-        
-    if isinstance(count, str):
-        # Remove any non-numeric characters except decimal point
-        cleaned = ''.join(c for c in count if c.isdigit() or c == '.')
-        if cleaned:
-            try:
-                # First try converting to float (in case it has decimals)
-                float_val = float(cleaned)
-                # Then convert to int
-                return int(float_val)
-            except (ValueError, TypeError):
-                # If that fails, try just getting the first sequence of numbers
-                import re
-                numbers = re.findall(r'\d+', count)
-                if numbers:
-                    return int(numbers[0])
-                return None
-    return None
 
 def process_company_batch(companies, country):
     """Process a batch of companies"""
-    results = []
-    total = len(companies)
-    
-    for i, company in enumerate(companies):
-        try:
-            print(f"Processing company {i+1}/{total}: {company}")
-            
-            # Skip empty company names
-            if not company or not company.strip():
-                results.append({
-                    'company': company,
-                    'status': 'error',
-                    'error': 'Empty company name'
-                })
-                continue
+    try:
+        return [search_web_info(company, country) for company in companies]
+    except Exception as e:
+        print(f"Error processing batch: {str(e)}")
+        return []
 
-            # Get company info
-            info = search_web_info(company, country)
-            if not info:
-                results.append({
-                    'company': company,
-                    'status': 'error',
-                    'error': 'No information found'
-                })
-                continue
-                
-            results.append(info)
+def process_file():
+    """Process uploaded file"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
             
-        except Exception as e:
-            print(f"Error processing {company}: {str(e)}")
-            results.append({
-                'company': company,
-                'status': 'error',
-                'error': str(e)
-            })
+        file = request.files['file']
+        country = request.form.get('country', '').strip()
+        
+        if not file or file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
             
-    return results
+        if not country:
+            return jsonify({"error": "No country specified"}), 400
+            
+        print(f"Processing file '{file.filename}' for country: {country}")
+        
+        # Read CSV content
+        content = file.read().decode('utf-8')
+        print(f"Successfully read file content, length: {len(content)}")
+        
+        # Parse CSV
+        reader = csv.reader(StringIO(content))
+        companies = [row[0].strip() for row in reader if row and row[0].strip()]
+        
+        if not companies:
+            return jsonify({"error": "No companies found in file"}), 400
+            
+        print(f"Found {len(companies)} companies")
+        
+        # Process in small batches
+        batch_size = 2
+        batches = [companies[i:i + batch_size] for i in range(0, len(companies), batch_size)]
+        print(f"Processing companies in batches of {batch_size}")
+        
+        all_results = []
+        for i, batch in enumerate(batches, 1):
+            print(f"Processing batch {i}/{len(batches)}")
+            for j, company in enumerate(batch, 1):
+                print(f"Processing company {j}/{len(batch)}: {company}")
+            
+            results = process_company_batch(batch, country)
+            all_results.extend(results)
+
+        print("Creating output CSV...")
+        # Create CSV in memory
+        si = StringIO()
+        writer = csv.writer(si)
+        
+        # Write header - simplified columns
+        writer.writerow(['Company', 'Employee Count', 'Confidence'])
+        
+        # Write results - only the needed fields
+        for result in all_results:
+            writer.writerow([
+                result.get('Company', ''),
+                result.get('Employee Count', ''),
+                result.get('Confidence', '')
+            ])
+        
+        print("Preparing file download...")
+        output = make_response(si.getvalue())
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'employee_counts_{timestamp}.csv'
+        
+        output.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        output.headers["Content-type"] = "text/csv"
+        return output
 
 @app.route('/')
 def health_check():
@@ -297,158 +278,7 @@ def get_countries():
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
 def process_file():
     """Process uploaded file"""
-    try:
-        if request.method == 'OPTIONS':
-            return handle_preflight()
-
-        print(f"Starting file processing... Content-Type: {request.content_type}")
-        print(f"Request headers: {dict(request.headers)}")
-        
-        # Get file from request
-        if 'file' not in request.files:
-            print("No file in request.files")
-            print(f"Form data: {request.form}")
-            print(f"Files: {request.files}")
-            return jsonify({
-                "error": "No file provided",
-                "details": "The request must include a file in multipart/form-data"
-            }), 400
-            
-        file = request.files['file']
-        if not file or not file.filename:
-            print("File object is empty or has no filename")
-            return jsonify({
-                "error": "Empty file provided",
-                "details": "The uploaded file is empty or has no filename"
-            }), 400
-
-        # Get country from request
-        country = request.form.get('country')
-        if not country:
-            print("No country specified")
-            return jsonify({
-                "error": "No country specified",
-                "details": "Please select a country from the dropdown"
-            }), 400
-
-        print(f"Processing file '{file.filename}' for country: {country}")
-
-        try:
-            # Read CSV content with explicit encoding
-            content = file.read()
-            if not content:
-                print("File content is empty")
-                return jsonify({
-                    "error": "Empty file content",
-                    "details": "The uploaded file contains no data"
-                }), 400
-                
-            try:
-                content = content.decode('utf-8')
-            except UnicodeDecodeError:
-                print("Trying alternative encoding...")
-                try:
-                    content = content.decode('utf-8-sig')  # Try with BOM
-                except UnicodeDecodeError as e:
-                    return jsonify({
-                        "error": "Invalid file encoding",
-                        "details": "Please ensure the file is saved as UTF-8 encoded CSV"
-                    }), 400
-                
-            print(f"Successfully read file content, length: {len(content)}")
-            
-            # Parse CSV data
-            try:
-                csv_data = list(csv.reader(StringIO(content)))
-            except csv.Error as e:
-                return jsonify({
-                    "error": "Invalid CSV format",
-                    "details": f"CSV parsing error: {str(e)}"
-                }), 400
-
-            if len(csv_data) < 2:
-                print("CSV has less than 2 rows")
-                return jsonify({
-                    "error": "Invalid CSV format",
-                    "details": "File must contain a header row and at least one data row"
-                }), 400
-
-            # Extract company names (skip header)
-            companies = [row[0].strip() for row in csv_data[1:] if row and row[0].strip()]
-            print(f"Found {len(companies)} companies")
-            
-            if not companies:
-                return jsonify({
-                    "error": "No valid company names",
-                    "details": "No valid company names found in the first column"
-                }), 400
-
-            # Process in smaller batches to avoid timeouts
-            batch_size = 2  # Process just 2 at a time
-            all_results = []
-            
-            print(f"Processing companies in batches of {batch_size}")
-            for i in range(0, len(companies), batch_size):
-                batch = companies[i:i + batch_size]
-                print(f"Processing batch {i//batch_size + 1}/{(len(companies) + batch_size - 1)//batch_size}")
-                try:
-                    results = process_company_batch(batch, country)
-                    all_results.extend(results)
-                except Exception as e:
-                    print(f"Error processing batch: {str(e)}")
-                    traceback.print_exc()
-                    # Continue with next batch
-                    all_results.extend([{
-                        'company': company,
-                        'status': 'error',
-                        'error': f"Failed to process: {str(e)}"
-                    } for company in batch])
-
-            print("Creating output CSV...")
-            # Create CSV in memory using StringIO
-            si = StringIO()
-            writer = csv.writer(si)
-            
-            # Write header
-            writer.writerow(['Company', 'Employee Count', 'Confidence', 'Sources', 'Status', 'Error/Explanation'])
-            
-            # Write results
-            for result in all_results:
-                writer.writerow([
-                    result.get('company', ''),
-                    result.get('employee_count', ''),
-                    result.get('confidence', ''),
-                    result.get('sources', ''),
-                    result.get('status', 'error'),
-                    result.get('error', result.get('explanation', ''))
-                ])
-            
-            print("Preparing file download...")
-            # Create the response
-            output = make_response(si.getvalue())
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'employee_counts_{timestamp}.csv'
-            
-            # Set headers
-            output.headers["Content-Disposition"] = f"attachment; filename={filename}"
-            output.headers["Content-type"] = "text/csv"
-            return output
-            
-        except csv.Error as e:
-            print(f"CSV parsing error: {str(e)}")
-            return jsonify({
-                "error": "Invalid CSV format",
-                "details": str(e)
-            }), 400
-            
-    except Exception as e:
-        print(f"Error processing file: {str(e)}")
-        traceback.print_exc()
-        return jsonify({
-            "error": "Failed to process file",
-            "details": str(e),
-            "type": "network_error" if "Network" in str(e) else "processing_error"
-        }), 500
+    return process_file()
 
 @app.route('/employee_count', methods=['POST'])
 def get_employee_count():
