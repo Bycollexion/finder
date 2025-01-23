@@ -34,15 +34,20 @@ CORS(app, resources={
     }
 })
 
+def handle_preflight():
+    """Handle CORS preflight request"""
+    response = jsonify({})
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    return response, 204
+
 @app.after_request
 def after_request(response):
-    """Add headers to every response"""
-    origin = request.headers.get('Origin')
-    if origin in ["https://finder-git-main-bycollexions-projects.vercel.app", "http://localhost:3000", "http://localhost:5173"]:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')
+    """Add CORS headers to all responses"""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     return response
 
 def search_web_info(company, country):
@@ -550,12 +555,12 @@ def process_file():
             # Create response with file download
             output.seek(0)
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            return send_file(
-                BytesIO(output.getvalue().encode('utf-8')),
-                mimetype='text/csv',
-                as_attachment=True,
-                download_name=f'employee_counts_{timestamp}.csv'
-            )
+            
+            # Create response
+            response = make_response(output.getvalue())
+            response.headers['Content-Type'] = 'text/csv'
+            response.headers['Content-Disposition'] = f'attachment; filename=employee_counts_{timestamp}.csv'
+            return response
 
         except csv.Error as e:
             print(f"CSV parsing error: {str(e)}")
