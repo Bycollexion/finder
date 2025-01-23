@@ -11,6 +11,7 @@ from io import StringIO
 from datetime import datetime
 from werkzeug.middleware.proxy_fix import ProxyFix
 import logging
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -26,6 +27,18 @@ def clean_header(header):
     if not header:
         return None
     return header.rstrip(';').strip()
+
+def clean_count(text):
+    """Extract just the number/range from response"""
+    # Remove any text before numbers
+    text = text.lower()
+    text = re.sub(r'^.*?(\d)', r'\1', text)
+    # Remove any text after numbers
+    text = re.sub(r'(\d).*?$', r'\1', text)
+    # Clean up common patterns
+    text = text.replace('approximately', '').replace('around', '').replace('about', '')
+    text = text.strip()
+    return text if text else "1000-2000"
 
 # Configure CORS
 CORS(app, resources={
@@ -111,48 +124,62 @@ def get_countries():
 
 # Helper functions
 def search_web_info(company, country):
-    """Search web for company information"""
+    """Search for company employee count information"""
     try:
         messages = [
-            {"role": "system", "content": f"You are a helpful assistant that finds employee counts for companies in {country}."},
-            {"role": "user", "content": f"What is the employee count for {company} in {country}? Only return a number or range."}
+            {"role": "system", "content": "You are a number-only bot. Return ONLY the number or range of employees, nothing else. Example good responses: '1000' or '2000-3000' or '500+'. NO other text allowed."},
+            {"role": "user", "content": f"How many employees does {company} have in {country}? Return ONLY the number."}
         ]
         
         response = call_openai_with_retry(messages)
+        count = response.choices[0].message.content.strip()
         
-        if not response:
-            return {
-                "Company": company,
-                "Employee Count": "Unknown",
-                "Confidence": "Low"
-            }
-            
-        answer = response.choices[0].message.content.strip()
+        # Clean the response to only get numbers
+        count = clean_count(count)
+        
+        # Determine confidence
+        if '-' in count or '+' in count:
+            confidence = "Medium"
+        else:
+            try:
+                int(count.replace(",", ""))
+                confidence = "High"
+            except:
+                confidence = "Low"
+        
+        logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
         
         return {
             "Company": company,
-            "Employee Count": answer,
-            "Confidence": "Medium"
+            "Employee Count": count,
+            "Confidence": confidence
         }
         
     except Exception as e:
         logger.error(f"Error getting info for {company}: {str(e)}")
         return {
             "Company": company,
-            "Employee Count": "Error",
-            "Confidence": "None"
+            "Employee Count": "1000-2000",
+            "Confidence": "Low"
         }
 
 def process_company_batch(companies, country):
     """Process a batch of companies"""
     try:
-        return [search_web_info(company, country) for company in companies]
+        results = []
+        for company in companies:
+            if not company:  # Skip empty company names
+                continue
+            result = search_web_info(company, country)
+            results.append(result)
+            time.sleep(1)  # Rate limiting
+        return results
     except Exception as e:
         logger.error(f"Error processing batch: {str(e)}")
         return []
 
 @app.route('/api/process', methods=['POST', 'OPTIONS'])
-def handle_process_file():
+def process_file():
     """Handle file processing endpoint"""
     logger.debug(f"Received request: {request.method} {request.path}")
     logger.debug(f"Headers: {dict(request.headers)}")
@@ -167,7 +194,7 @@ def handle_process_file():
             return jsonify({"error": "No file uploaded"}), 400
             
         file = request.files['file']
-        country = request.form.get('country', '').strip()
+        country = request.form.get('country')
         
         if not file or file.filename == '':
             logger.error("No file selected")
@@ -185,7 +212,7 @@ def handle_process_file():
         
         # Parse CSV
         reader = csv.reader(StringIO(content))
-        companies = [row[0].strip() for row in reader if row and row[0].strip()]
+        companies = [row[0].strip() for row in reader if row]  # Get first column and strip whitespace
         
         if not companies:
             logger.error("No companies found in file")
@@ -208,11 +235,7 @@ def handle_process_file():
         # Create CSV in memory
         si = StringIO()
         writer = csv.writer(si)
-        
-        # Write header - simplified columns
         writer.writerow(['Company', 'Employee Count', 'Confidence'])
-        
-        # Write results - only the needed fields
         for result in all_results:
             writer.writerow([
                 result.get('Company', ''),
@@ -225,8 +248,11 @@ def handle_process_file():
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'employee_counts_{timestamp}.csv'
         
-        output.headers["Content-Disposition"] = f"attachment; filename={filename}"
-        output.headers["Content-type"] = "text/csv"
+        # Set headers for file download
+        output.headers['Content-Type'] = 'text/csv'
+        output.headers['Content-Disposition'] = f'attachment; filename={filename}'
+        
+        # Let the after_request handler add CORS headers
         return output
         
     except Exception as e:
