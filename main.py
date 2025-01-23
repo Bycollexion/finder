@@ -76,23 +76,44 @@ def get_country_name(code):
     }
     return country_map.get(code.lower(), code)
 
+def search_web(query):
+    """Search the web for the given query"""
+    try:
+        response = requests.get(f"https://www.google.com/search?q={query}")
+        return response.text
+    except Exception as e:
+        logger.error(f"Error searching web: {str(e)}")
+        return ""
+
 def search_web_info(company, country):
-    """Search for company employee count information using OpenAI"""
+    """Search for company employee count information using OpenAI and web search"""
     try:
         if company.lower() == 'company':
             return None
 
         country_name = get_country_name(country)
-
-        # Use detailed prompts
+        
+        # First, search the web for recent information
+        search_query = f"{company} {country_name} employee count 2024"
+        web_results = search_web(search_query)
+        
+        # Use the web results in our prompt
         messages = [
             {
                 "role": "system",
-                "content": "You are an AI with access to a vast database of corporate information. Provide the most accurate and recent employee count for companies based on available data."
+                "content": f"""You are an AI with access to current web data. Based on the following search results and your knowledge, provide the most accurate employee count for the specified company.
+
+Search Results:
+{web_results}
+
+Instructions:
+1. Extract the most recent employee count for the specific country
+2. Consider regional office data if available
+3. Return ONLY the number, no additional text"""
             },
             {
                 "role": "user",
-                "content": f"Using your database, determine the employee count of {company} in {country_name}. Focus on the most recent data available."
+                "content": f"What is the current employee count of {company} in {country_name}?"
             }
         ]
 
@@ -105,16 +126,22 @@ def search_web_info(company, country):
 
         count = extract_number(response.choices[0].message['content'])
         
-        # If we got a number, verify it with a second prompt
         if count and count != "0":
+            # Verify the count with another search
+            verify_query = f"{company} {country_name} office size employees {count}"
+            verify_results = search_web(verify_query)
+            
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an AI that verifies the accuracy of employee counts using database knowledge. Confirm the reliability of the data."
+                    "content": f"""Based on these search results, verify if the employee count is accurate:
+{verify_results}
+
+Return ONLY: YES if confident, NO if unsure, UNKNOWN if no data available"""
                 },
                 {
                     "role": "user",
-                    "content": f"Is the employee count for {company} in {country_name} approximately {count}? Answer YES if confident, NO if unsure, UNKNOWN if no data available."
+                    "content": f"Is {count} employees accurate for {company} in {country_name}?"
                 }
             ]
 
@@ -134,15 +161,21 @@ def search_web_info(company, country):
             else:
                 confidence = "Low"
         else:
-            # If no count found, try one more time with a different prompt
+            # Try one more time with a different search
+            backup_query = f"{company} {country_name} office linkedin glassdoor employees"
+            backup_results = search_web(backup_query)
+            
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an AI that estimates employee counts using all available data sources. Return only a number."
+                    "content": f"""Based on these search results, estimate the employee count:
+{backup_results}
+
+Return ONLY the number, no text."""
                 },
                 {
                     "role": "user",
-                    "content": f"Estimate the employee count of {company} in {country_name}. Output: [Number only]"
+                    "content": f"Estimate {company}'s employee count in {country_name}"
                 }
             ]
 
