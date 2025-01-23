@@ -13,6 +13,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import time
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from openai.error import RateLimitError, APIError
+import random
+from datetime import datetime
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
@@ -89,18 +91,80 @@ def search_web_info(company, country):
                 2. Official company websites and career pages
                 3. Job posting sites (Glassdoor, Indeed, JobStreet)
                 
+                Return information in this format:
+                {
+                    "company": "company name",
+                    "employee_count": "number or range",
+                    "confidence": "high/medium/low",
+                    "sources": "list of sources",
+                    "status": "success/error",
+                    "explanation": "explanation of the result"
+                }
+                
                 DO NOT include news articles or press releases.
                 Only return factual, verifiable information."""},
-                {"role": "user", "content": f"Search for employee count information for {company} in {country}. Focus on LinkedIn, company website, and job sites only."}
+                {"role": "user", "content": f"Search for employee count information for {company} in {country}. Focus on LinkedIn, company website, and job sites only. Return in JSON format."}
             ]
         )
-        return response.choices[0].message.content
+        
+        content = response.choices[0].message.content
+        try:
+            # Try to parse as JSON first
+            if isinstance(content, str):
+                if content.startswith('{') and content.endswith('}'):
+                    result = json.loads(content)
+                else:
+                    # If not JSON, create a basic result
+                    result = {
+                        "company": company,
+                        "employee_count": "Unknown",
+                        "confidence": "low",
+                        "sources": "GPT response",
+                        "status": "partial",
+                        "explanation": content
+                    }
+            else:
+                result = content
+                
+            # Ensure all required fields are present
+            required_fields = ["company", "employee_count", "confidence", "sources", "status", "explanation"]
+            for field in required_fields:
+                if field not in result:
+                    result[field] = ""
+                    
+            return result
+            
+        except json.JSONDecodeError:
+            # If JSON parsing fails, return structured error
+            return {
+                "company": company,
+                "employee_count": "Unknown",
+                "confidence": "low",
+                "sources": "Error parsing GPT response",
+                "status": "error",
+                "explanation": content
+            }
+            
     except Exception as e:
         error_msg = str(e)
         if "quota" in error_msg.lower():
-            return {"error": "quota_exceeded", "message": "API quota exceeded. Please try again later."}
+            return {
+                "company": company,
+                "employee_count": "Unknown",
+                "confidence": "none",
+                "sources": "API quota exceeded",
+                "status": "error",
+                "error": "API quota exceeded. Please try again later."
+            }
         print(f"Error during web search: {error_msg}")
-        return "Error occurred during search. Using available data for estimation."
+        return {
+            "company": company,
+            "employee_count": "Unknown",
+            "confidence": "none",
+            "sources": "Error occurred",
+            "status": "error",
+            "error": f"Error occurred during search: {error_msg}"
+        }
 
 def review_employee_count(company, country, initial_result, web_info):
     """Review and validate employee count based on available data"""
@@ -410,7 +474,7 @@ def process_file():
 
             print("Creating output CSV...")
             # Create CSV from results
-            output = StringIO()
+            output = BytesIO()  # Use BytesIO instead of StringIO
             writer = csv.writer(output)
             
             # Write header
@@ -428,22 +492,27 @@ def process_file():
                 ])
             
             print("Preparing file download...")
-            # Create response with file download
+            # Prepare file for download
             output.seek(0)
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f'employee_counts_{timestamp}.csv'
             
-            # Create response with all necessary headers
-            response = make_response(output.getvalue())
-            response.headers.update({
-                'Content-Type': 'text/csv',
-                'Content-Disposition': f'attachment; filename=employee_counts_{timestamp}.csv',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Expose-Headers': 'Content-Disposition'
-            })
-            return response
-
+            try:
+                # Use send_file for proper file download handling
+                return send_file(
+                    output,
+                    mimetype='text/csv',
+                    as_attachment=True,
+                    download_name=filename,
+                    max_age=0
+                )
+            except Exception as e:
+                print(f"Error sending file: {str(e)}")
+                return jsonify({
+                    "error": "Failed to generate download",
+                    "details": str(e)
+                }), 500
+            
         except csv.Error as e:
             print(f"CSV parsing error: {str(e)}")
             return jsonify({
@@ -524,36 +593,54 @@ def get_employee_count():
 
 @retry(
     retry=retry_if_exception_type((RateLimitError, APIError)),
-    wait=wait_exponential(multiplier=1, min=4, max=10),  # Shorter max wait to avoid worker timeout
-    stop=stop_after_attempt(3)  # Fewer attempts
+    wait=wait_exponential(multiplier=2, min=4, max=60),  # Longer wait times with more exponential backoff
+    stop=stop_after_attempt(5)  # More attempts before giving up
 )
-def call_openai_with_retry(messages, functions=None, function_call=None):
-    """Make OpenAI API call with retry logic"""
+def call_openai_with_retry(messages, functions=None, function_call=None, model="gpt-4"):
+    """Make OpenAI API call with retry logic and model fallback"""
     try:
+        # Add jitter to help prevent rate limits
+        time.sleep(random.uniform(0.1, 0.5))
+        
         if functions:
             return openai.ChatCompletion.create(
-                model="gpt-4",
+                model=model,
                 messages=messages,
                 functions=functions,
                 function_call=function_call,
-                request_timeout=30  # 30 second timeout
+                request_timeout=45  # Increased timeout
             )
         return openai.ChatCompletion.create(
-            model="gpt-4",
+            model=model,
             messages=messages,
-            request_timeout=30  # 30 second timeout
+            request_timeout=45  # Increased timeout
         )
     except RateLimitError as e:
-        print(f"Rate limit error: {str(e)}")
+        print(f"Rate limit error with {model}: {str(e)}")
+        if model == "gpt-4":
+            print("Falling back to GPT-3.5-turbo...")
+            # Try GPT-3.5-turbo as fallback
+            try:
+                return call_openai_with_retry(messages, functions, function_call, model="gpt-3.5-turbo")
+            except Exception as fallback_error:
+                print(f"Fallback to GPT-3.5-turbo failed: {str(fallback_error)}")
+                raise
         print("Rate limit reached. Waiting before retry...")
         raise  # Let retry handle it
     except APIError as e:
-        print(f"API error: {str(e)}")
+        print(f"API error with {model}: {str(e)}")
         print("API error occurred. Waiting before retry...")
         raise  # Let retry handle it
     except Exception as e:
         if "quota" in str(e).lower():
-            raise RateLimitError("Quota exceeded")
+            if model == "gpt-4":
+                print("Quota exceeded for GPT-4, trying GPT-3.5-turbo...")
+                try:
+                    return call_openai_with_retry(messages, functions, function_call, model="gpt-3.5-turbo")
+                except Exception as fallback_error:
+                    print(f"Fallback to GPT-3.5-turbo failed: {str(fallback_error)}")
+                    raise RateLimitError("All models quota exceeded")
+            raise RateLimitError(f"Quota exceeded for {model}")
         raise
 
 if __name__ == '__main__':
