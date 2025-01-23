@@ -102,9 +102,9 @@ def search_web_info(company, country):
             
         # Try multiple search queries to get better data
         search_queries = [
-            f"{company} {country} employees site:linkedin.com",
-            f"{company} {country} number of employees 2024",
-            f"{company} office {country} team size"
+            f"{company} {country} office employees site:linkedin.com",
+            f"{company} {country} headquarters employees",
+            f"{company} {country} local office size"
         ]
         
         relevant_text = ""
@@ -115,7 +115,9 @@ def search_web_info(company, country):
                     try:
                         content = read_url_content({"Url": result["url"]})
                         if content:
-                            relevant_text += f"\nSource ({result['url']}):\n{content}\n"
+                            # Only include text that mentions both company and country
+                            if company.lower() in content.lower() and country.lower() in content.lower():
+                                relevant_text += f"\nSource ({result['url']}):\n{content}\n"
                     except:
                         continue
         
@@ -123,31 +125,32 @@ def search_web_info(company, country):
         messages = [
             {
                 "role": "system", 
-                "content": """You are an employee count bot. Return ONLY numbers with comparison operators.
-                ALWAYS use comparison operators (>, <, =) since exact numbers are hard to verify.
-                Examples of good responses:
-                - >500 (more than 500 employees)
-                - <2000 (less than 2000 employees)
-                - >100 (more than 100 employees)
-                Bad responses (never do these):
-                - exact numbers without operators (use > or < instead)
-                - "Sorry, I can't..."
-                - "The company has..."
-                - "As an AI..."
-                Just return the number with operator, nothing else.
+                "content": f"""You are an employee count bot that provides ONLY local office numbers for {country}.
+                NEVER return global employee counts.
+                ALWAYS use comparison operators (>, <, =).
                 
-                Base your answer on the provided search results. If no clear data is found,
-                return '>100' to indicate uncertainty."""
+                Examples for Singapore office sizes:
+                - >200 (more than 200 employees in Singapore office)
+                - <500 (less than 500 in Singapore)
+                - >50 (more than 50 local employees)
+                
+                Bad responses (never do these):
+                - Global employee counts
+                - Numbers over 10,000 (very rare for local offices)
+                - "Sorry, I can't..."
+                - Any explanation text
+                
+                Just return the local office number with operator, nothing else."""
             },
             {
                 "role": "user",
                 "content": f"""Based on these search results:
                 {relevant_text}
                 
-                How many employees does {company} have in {country}? 
+                How many employees does {company} have in their {country} office specifically? 
                 Return ONLY a number with comparison operator (>, <, =).
-                Be specific to this country's office, not global numbers.
-                If multiple sources give different numbers, use the most recent one."""
+                Must be the local office number, not global employees.
+                If unsure, return a conservative estimate."""
             }
         ]
         
@@ -157,15 +160,22 @@ def search_web_info(company, country):
         # Clean the response
         count = clean_count(raw_count, company)
         
-        # If cleaning failed, use default values with comparison operators
-        if count is None:
-            count = '>100'  # Conservative default when no data found
+        # If cleaning failed or number seems too high, use conservative defaults
+        if count is None or (count.isdigit() and int(count) > 10000):
+            if company.lower() in ['google', 'facebook', 'amazon']:
+                count = '>1000'
+            elif company.lower() in ['grab', 'shopee', 'sea']:
+                count = '>500'
+            elif company.lower() in ['jobstreet', 'jobs db', 'tokopedia', 'goto']:
+                count = '>50'
+            else:
+                count = '>100'
             confidence = "Low"
         else:
             # Add comparison operator if missing
             if not any(op in count for op in ['>', '<', '=']):
-                count = f">{count}"  # Default to greater than if no operator
-            confidence = "High" if relevant_text else "Medium"  # High confidence only if we found search results
+                count = f">{count}"
+            confidence = "High" if relevant_text else "Medium"
         
         logger.debug(f"Got response for {company}: {count} (confidence: {confidence})")
         
