@@ -72,7 +72,13 @@ def get_country_name(code):
         'id': 'Indonesia',
         'th': 'Thailand',
         'vn': 'Vietnam',
-        'ph': 'Philippines'
+        'ph': 'Philippines',
+        'jp': 'Japan',
+        'kr': 'South Korea',
+        'cn': 'China',
+        'hk': 'Hong Kong',
+        'tw': 'Taiwan',
+        'au': 'Australia'
     }
     return country_map.get(code.lower(), code)
 
@@ -85,6 +91,15 @@ def search_web(query):
         logger.error(f"Error searching web: {str(e)}")
         return ""
 
+def read_url_content(url):
+    """Read content from a URL"""
+    try:
+        response = requests.get(url)
+        return response.text
+    except Exception as e:
+        logger.error(f"Error reading URL content: {str(e)}")
+        return ""
+
 def search_web_info(company, country):
     """Search for company employee count information using OpenAI and web search"""
     try:
@@ -94,20 +109,29 @@ def search_web_info(company, country):
         country_name = get_country_name(country)
         
         # First, search the web for recent information
-        search_query = f"{company} {country_name} employee count 2024"
+        search_query = f"{company} {country_name} office employees 2024 linkedin glassdoor"
         web_results = search_web(search_query)
+        
+        # Extract URLs from search results and read their content
+        content = ""
+        for url in web_results.get('urls', [])[:3]:  # Get first 3 URLs
+            try:
+                content += read_url_content(url) + "\n"
+            except:
+                continue
         
         # Use the web results in our prompt
         messages = [
             {
                 "role": "system",
-                "content": f"""You are an AI with access to current web data. Based on the following search results and your knowledge, provide the most accurate employee count for the specified company.
+                "content": f"""You are an AI tasked with finding employee counts from web data.
+Based on the following search results, determine the employee count for {company} in {country_name}.
 
 Search Results:
-{web_results}
+{content}
 
 Instructions:
-1. Extract the most recent employee count for the specific country
+1. Focus on finding the most recent employee count specifically for {country_name}
 2. Consider regional office data if available
 3. Return ONLY the number, no additional text"""
             },
@@ -128,14 +152,22 @@ Instructions:
         
         if count and count != "0":
             # Verify the count with another search
-            verify_query = f"{company} {country_name} office size employees {count}"
+            verify_query = f"{company} {country_name} headquarters staff size"
             verify_results = search_web(verify_query)
+            
+            # Read content from verification URLs
+            verify_content = ""
+            for url in verify_results.get('urls', [])[:2]:
+                try:
+                    verify_content += read_url_content(url) + "\n"
+                except:
+                    continue
             
             messages = [
                 {
                     "role": "system",
                     "content": f"""Based on these search results, verify if the employee count is accurate:
-{verify_results}
+{verify_content}
 
 Return ONLY: YES if confident, NO if unsure, UNKNOWN if no data available"""
                 },
@@ -162,14 +194,22 @@ Return ONLY: YES if confident, NO if unsure, UNKNOWN if no data available"""
                 confidence = "Low"
         else:
             # Try one more time with a different search
-            backup_query = f"{company} {country_name} office linkedin glassdoor employees"
+            backup_query = f"{company} {country_name} careers jobs current employees"
             backup_results = search_web(backup_query)
+            
+            # Read content from backup URLs
+            backup_content = ""
+            for url in backup_results.get('urls', [])[:2]:
+                try:
+                    backup_content += read_url_content(url) + "\n"
+                except:
+                    continue
             
             messages = [
                 {
                     "role": "system",
                     "content": f"""Based on these search results, estimate the employee count:
-{backup_results}
+{backup_content}
 
 Return ONLY the number, no text."""
                 },
