@@ -20,8 +20,38 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Configure CORS - allow all origins for now to debug
-CORS(app, supports_credentials=True)
+# Helper functions
+def clean_header(header):
+    """Clean header value by removing trailing semicolons and whitespace"""
+    if not header:
+        return None
+    return header.rstrip(';').strip()
+
+# Configure CORS
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "allow_headers": ["Content-Type"],
+        "expose_headers": ["Content-Type"],
+        "supports_credentials": True,
+        "max_age": 3600
+    }
+})
+
+@app.after_request
+def add_cors_headers(response):
+    """Add CORS headers to all responses"""
+    origin = clean_header(request.headers.get('Origin'))
+    logger.debug(f"Request origin: {origin}")
+    
+    response.headers['Access-Control-Allow-Origin'] = origin if origin else '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    
+    logger.debug(f"Response headers: {dict(response.headers)}")
+    return response
 
 # Basic error handlers
 @app.errorhandler(404)
@@ -33,41 +63,6 @@ def not_found_error(error):
 def internal_error(error):
     logger.error(f"Error 500: {str(error)}")
     return jsonify({"error": "Internal server error"}), 500
-
-# Helper functions
-def clean_header(header):
-    """Clean header value by removing trailing semicolons and whitespace"""
-    if not header:
-        return header
-    return header.rstrip(';').strip()
-
-def handle_preflight():
-    """Handle CORS preflight request"""
-    logger.debug("Handling OPTIONS request")
-    response = make_response()
-    origin = request.headers.get('Origin')
-    
-    # List of allowed origins
-    allowed_origins = [
-        'http://localhost:3000',
-        'https://finder-git-main-bycollexions-projects.vercel.app',
-        'https://finder-bycollexions-projects.vercel.app'
-    ]
-    
-    if origin in allowed_origins:
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        response.headers['Access-Control-Max-Age'] = '3600'
-    
-    return response, 204
-
-@app.after_request
-def after_request(response):
-    """Log response details"""
-    logger.debug(f"Response status: {response.status}")
-    logger.debug(f"Response headers: {dict(response.headers)}")
-    return response
 
 # API Endpoints
 @app.route('/')
@@ -85,7 +80,7 @@ def get_countries():
     
     if request.method == 'OPTIONS':
         logger.debug("Handling OPTIONS request")
-        return handle_preflight()
+        return '', 204
 
     try:
         countries = [
@@ -104,23 +99,15 @@ def get_countries():
         ]
         
         logger.debug(f"Sending response: {countries}")
-        response = make_response(jsonify(countries))
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = '*'
-        response.headers['Content-Type'] = 'application/json'
-        return response
+        return jsonify(countries)
 
     except Exception as e:
         logger.error(f"Error getting countries: {str(e)}")
         logger.error(traceback.format_exc())
-        response = make_response(jsonify({
+        return jsonify({
             "error": "Failed to get countries",
             "details": str(e)
-        }))
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Content-Type'] = 'application/json'
-        return response, 500
+        }), 500
 
 # Helper functions
 def search_web_info(company, country):
@@ -172,7 +159,7 @@ def handle_process_file():
     
     if request.method == 'OPTIONS':
         logger.debug("Handling OPTIONS request")
-        return handle_preflight()
+        return '', 204
         
     try:
         if 'file' not in request.files:
